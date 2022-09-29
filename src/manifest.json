@@ -28,7 +28,7 @@
     ]
 ,   "permissions" : [ "contextMenus", "downloads", "storage" ]
 ,   "background"  : {
-        "service_worker" : "js/background.js"
+        "service_worker" : "background-wrapper.js"
     }
 ,   "options_ui" : {
         "page" : "html/options.html",
