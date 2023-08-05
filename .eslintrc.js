@@ -4,9 +4,8 @@ module.exports = {
     ],
     "env": {
         "browser": true,
-        "es6": true,
-        "jquery": true,
-        "node": true,
+        "es2021": true,
+        "jquery": true
     },
     "extends": "eslint:recommended",
     "globals": {
@@ -37,9 +36,24 @@ module.exports = {
         "async_get_values": "readonly",
         "extension_functions": "readonly",
         "BigInt": "readonly",
+        "importScripts": "readonly",
     },
+    "overrides": [
+        {
+            "env": {
+                "node": true
+            },
+            "files": [
+                ".eslintrc.{js,cjs}"
+            ],
+            "parserOptions": {
+                "sourceType": "script"
+            }
+        }
+    ],
     "parserOptions": {
-        "ecmaVersion": 2018
+        "ecmaVersion": "latest",
+        "sourceType": "module"
     },
     "rules": {
         "no-unused-vars": "off",
