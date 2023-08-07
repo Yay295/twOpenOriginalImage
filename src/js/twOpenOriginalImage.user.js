@@ -246,7 +246,6 @@ switch ( LANGUAGE ) {
         break;
 }
 
-
 function to_array( array_like_object ) {
     return Array.prototype.slice.call( array_like_object );
 } // end of to_array()
@@ -731,7 +730,7 @@ function get_img_extension( img_url, extension_list ) {
     
     var extension = '';
     
-    extension_list = ( extension_list ) ? extension_list : [ 'png', 'jpg', 'gif' ];
+    extension_list = ( extension_list ) ? extension_list : [ 'png', 'jpg', 'gif', 'webp' ];
     
     if ( img_url.match( new RegExp( '\.(' + extension_list.join('|') + ')' ) ) ) {
         extension = RegExp.$1;
@@ -754,6 +753,7 @@ function get_img_kind( img_url ) {
 
 function get_img_url( img_url, kind, old_format ) {
     img_url = normalize_img_url( img_url );
+    var orig_img_url = img_url;
     
     if ( old_format ) {
         if ( ! kind ) {
@@ -765,18 +765,19 @@ function get_img_url( img_url, kind, old_format ) {
             }
         }
         img_url = img_url.replace( /:\w*$/, '' ) + kind;
+        img_url = img_url.replace( /\.webp:orig$/, '.jpg:orig' ); // [2023-08-06] format=webpにはname=origが存在しないため、ひとまずformat=jpgに置換
     }
     else {
         if ( ! kind ) {
             kind = 'orig';
         }
         kind = kind.replace( /:/g, '' );
-        
         if ( ! /:\w*$/.test( img_url ) ) {
             img_url += ':' + kind;
         }
         
         img_url = img_url.replace( /\.([^.]+):\w*$/, '' ) + '?format=' + RegExp.$1 + '&name=' + kind;
+        img_url = img_url.replace( /format=webp&name=orig$/, 'format=jpg&name=orig' ); // [2023-08-06] format=webpにはname=origが存在しないため、ひとまずformat=jpgに置換
     }
     
     return img_url;
@@ -940,6 +941,67 @@ function fetch_status( tweet_id ) {
         return response.json()
     } );
 } // end of fetch_status()
+
+
+const
+    is_valid_image = ( img_url ) => {
+        return new Promise( ( resolve, reject ) => {
+            const
+                try_img = new Image();
+            try_img.addEventListener( 'load', ( event ) => {
+                resolve( true );
+            } );
+            try_img.addEventListener( 'error', ( event ) => {
+                resolve( false );
+            } );
+            try {
+                try_img.src = img_url;
+            }
+            catch ( error ) {
+                // TODO: Firefox だとうまくいかない場合がある模様
+                // Content Security Policy: ページの設定により次のリソースの読み込みをブロックしました: (try_url) ("img-src https://abs.twimg.com https://ssl.google-analytics.com http://www.google-analytics.com")
+                resolve( false );
+            }
+        } );
+    },
+    
+    find_valid_img_url = ( () => {
+        const
+            img_url_replace_map = {},
+            extension_list = [ 'jpg', 'png', 'gif', 'webp' ];
+        
+        return async ( source_img_url ) => {
+            if ( ! source_img_url ) {
+                return source_img_url;
+            }
+            const
+                current_extension = get_img_extension( source_img_url, extension_list );
+            if ( ! current_extension ) {
+                return source_img_url;
+            }
+            const
+                valid_img_url = img_url_replace_map[ source_img_url ];
+            if ( valid_img_url ) {
+                return valid_img_url;
+            }
+            if ( await is_valid_image( source_img_url ) ) {
+                img_url_replace_map[ source_img_url ] = source_img_url;
+                return source_img_url;
+            }
+            for ( const extension of extension_list ) {
+                if ( extension == current_extension ) {
+                    continue;
+                }
+                const
+                    try_img_url = source_img_url.replace( `format=${current_extension}`, `format=${extension}` );
+                if ( await is_valid_image( try_img_url ) ) {
+                    img_url_replace_map[ source_img_url ] = try_img_url;
+                    return try_img_url;
+                }
+            }
+            return source_img_url;
+        };
+    } )();
 
 
 var DragScroll = {
@@ -1403,34 +1465,43 @@ function initialize_download_helper() {
     }
     
     if ( d.querySelector( 'form.search-404' ) ) {
-        var extension_list = [ 'png', 'jpg', 'gif' ],
-            current_extension = get_img_extension( img_url, extension_list );
+        var current_extension = get_img_extension( img_url );
         
         if ( ! current_extension ) {
             return;
         }
         
-        extension_list.forEach( function( extension ) {
-            if ( current_extension == extension ) {
-                return;
-            }
-            var try_img = new Image(),
-                try_url = img_url.replace( '.' + current_extension, '.' + extension );
+        /*
+        //extension_list.forEach( function( extension ) {
+        //    if ( current_extension == extension ) {
+        //        return;
+        //    }
+        //    var try_img = new Image(),
+        //        try_url = img_url.replace( '.' + current_extension, '.' + extension );
+        //    
+        //    add_event( try_img, 'load', function ( event ) {
+        //        w.location.replace( try_url );
+        //    } );
+        //    
+        //    try {
+        //        try_img.src = try_url;
+        //    }
+        //    catch ( error ) {
+        //        //log_error( error );
+        //        // TODO: Firefox だとうまくいかない
+        //        // Content Security Policy: ページの設定により次のリソースの読み込みをブロックしました: (try_url) ("img-src https://abs.twimg.com https://ssl.google-analytics.com http://www.google-analytics.com")
+        //    }
+        //} );
+        */
+        
+        ( async () => {
+            const
+                valid_img_url = await find_valid_img_url( img_url );
             
-            add_event( try_img, 'load', function ( event ) {
-                w.location.replace( try_url );
-            } );
-            
-            try {
-                try_img.src = try_url;
-            }
-            catch ( error ) {
-                //log_error( error );
-                // TODO: Firefox だとうまくいかない
-                // Content Security Policy: ページの設定により次のリソースの読み込みをブロックしました: (try_url) ("img-src https://abs.twimg.com https://ssl.google-analytics.com http://www.google-analytics.com")
+            if ( valid_img_url != img_url ) {
+                w.location.replace( valid_img_url );
             }
         } );
-        
         return;
     }
     
@@ -1438,10 +1509,21 @@ function initialize_download_helper() {
     
     if ( ( ! img_referrer ) || ( get_img_url( img_url ) !== get_img_url( img_referrer ) ) ) {
         // 画像単体で開いた場合、もしくは画像以外のページからの遷移時→デフォルトで原寸画像(:orig)を開く
-        var orig_url = get_img_url( img_url, 'orig' );
+        let
+            orig_url = get_img_url( img_url, 'orig' );
         
         if ( img_url != orig_url ) {
-            w.location.replace( orig_url );
+            const
+                current_extension = get_img_extension( img_url );
+            
+            if ( ! current_extension ) {
+                return;
+            }
+            ( async () => {
+                const
+                    valid_img_url = await find_valid_img_url( orig_url );
+                w.location.replace( valid_img_url );
+            } )();
             return;
         }
     }
@@ -3616,7 +3698,9 @@ function initialize( user_options ) {
                         
                         if ( ! /tweetdeck/.test( img_url ) ) {
                             if ( OPTIONS.SWAP_IMAGE_URL ) {
-                                img.setAttribute( 'src', img_url );
+                                ( async () => {
+                                    img.setAttribute( 'src', await find_valid_img_url( img_url ) );
+                                } )();
                             }
                             img_urls.push( img_url );
                         }
@@ -3624,10 +3708,12 @@ function initialize( user_options ) {
                     else if ( img.href ) {
                         img_url = normalize_img_url( img.getAttribute( 'data-original-url' ) || get_img_url_from_background( img ) || img.href );
                         
-                        if ( img_url && /\.(?:jpg|png|gif)/.test( img_url ) ) {
+                        if ( img_url && /\.(?:jpg|png|gif|webp)/.test( img_url ) ) {
                             img_url = get_img_url_orig( img_url );
                             if ( OPTIONS.SWAP_IMAGE_URL ) {
-                                img.setAttribute( 'href', img_url );
+                                ( async () => {
+                                    img.setAttribute( 'href', await find_valid_img_url( img_url ) );
+                                } )();
                             }
                             img_urls.push( img_url );
                         }
@@ -3757,63 +3843,75 @@ function initialize( user_options ) {
                 button.removeAttribute( 'data-target-img-url' );
                 button.removeAttribute( 'data-event-alt-key' );
                 
-                if ( OPTIONS.DISPLAY_ALL_IN_ONE_PAGE ^ alt_key_pushed ) {
-                    var tweet_link,
-                        tweet_url,
-                        tweet_text,
-                        title,
-                        article;
+                ( async () => {
+                    if ( focused_img_url ) {
+                        focused_img_url = await find_valid_img_url( focused_img_url );
+                    }
+                    for ( let ci = 0; ci < target_img_urls.length; ci ++ ) {
+                        target_img_urls[ ci ] = await find_valid_img_url( target_img_urls[ ci ] );
+                    }
+                    for ( let ci = 0; ci < target_all_img_urls.length; ci ++ ) {
+                        target_all_img_urls[ ci ] = await find_valid_img_url( target_all_img_urls[ ci ] );
+                    }
                     
-                    if ( is_react_twitter() ) {
-                        tweet_link = get_tweet_link_on_react_twitter( tweet );
-                        tweet_url = tweet_link && tweet_link.href;
-                        //tweet_text = tweet.querySelector( 'div[lang][dir="auto"] > span' );
-                        tweet_text = tweet.querySelector( 'div[lang][dir="auto"]' );
-                        if ( ! tweet_text ) {
-                            article = search_ancestor_by_attribute( tweet, 'role', 'article' );
-                            
-                            if ( article ) {
-                                //tweet_text = tweet.querySelector( 'div[lang][dir="auto"] > span' );
-                                tweet_text = tweet.querySelector( 'div[lang][dir="auto"]' );
+                    if ( OPTIONS.DISPLAY_ALL_IN_ONE_PAGE ^ alt_key_pushed ) {
+                        var tweet_link,
+                            tweet_url,
+                            tweet_text,
+                            title,
+                            article;
+                        
+                        if ( is_react_twitter() ) {
+                            tweet_link = get_tweet_link_on_react_twitter( tweet );
+                            tweet_url = tweet_link && tweet_link.href;
+                            //tweet_text = tweet.querySelector( 'div[lang][dir="auto"] > span' );
+                            tweet_text = tweet.querySelector( 'div[lang][dir="auto"]' );
+                            if ( ! tweet_text ) {
+                                article = search_ancestor_by_attribute( tweet, 'role', 'article' );
+                                
+                                if ( article ) {
+                                    //tweet_text = tweet.querySelector( 'div[lang][dir="auto"] > span' );
+                                    tweet_text = tweet.querySelector( 'div[lang][dir="auto"]' );
+                                }
                             }
+                        }
+                        else {
+                            tweet_link = tweet.querySelector( 'a[rel="url"][href^="https://twitter.com/"],a[rel="url"][href^="/"]' );
+                            tweet_url = tweet.getAttribute( 'data-permalink-path' ) || ( tweet_link && tweet_link.href );
+                            tweet_text = tweet.querySelector( '.tweet-text,.js-tweet-text' );
+                        }
+                        //title = ( tweet_text ) ? ( ( tweet_text.innerText !== undefined ) ? tweet_text.innerText : tweet_text.textContent ) : '';
+                        title = ( tweet_text ) ? get_text_from_element( tweet_text ).trim() : '';
+                        
+                        if ( OPTIONS.DISPLAY_OVERLAY || ( is_firefox() && is_extension() ) ) {
+                            // TODO: Firefox 68.0.1 では about:blank の document が「DOMException: "Permission denied to access property "document" on cross-origin object"」となってアクセス不可のため、常にオーバーレイ表示
+                            show_overlay( target_img_urls, tweet_url, title, focused_img_url, tweet, target_all_img_urls );
+                        }
+                        else {
+                            open_page( ( focused_img_url ) ? [ focused_img_url ] : target_img_urls, tweet_url, title );
                         }
                     }
                     else {
-                        tweet_link = tweet.querySelector( 'a[rel="url"][href^="https://twitter.com/"],a[rel="url"][href^="/"]' );
-                        tweet_url = tweet.getAttribute( 'data-permalink-path' ) || ( tweet_link && tweet_link.href );
-                        tweet_text = tweet.querySelector( '.tweet-text,.js-tweet-text' );
+                        if ( focused_img_url ) {
+                            target_img_urls = [ focused_img_url ];
+                        }
+                        
+                        var window_name = '_blank';
+                        
+                        // TODO: 順に開くと最後の画像タブがアクティブになってしまう
+                        if ( typeof extension_functions != 'undefined' ) {
+                            // 拡張機能の場合には chrome.tabs により制御
+                            extension_functions.open_multi_tabs( target_img_urls );
+                        }
+                        else {
+                            // 逆順にして、最初の画像がアクティブになるようにする
+                            target_img_urls.reverse();
+                            target_img_urls.forEach( function ( img_url, index ) {
+                                w.open( img_url, '_blank' );
+                            } );
+                        }
                     }
-                    //title = ( tweet_text ) ? ( ( tweet_text.innerText !== undefined ) ? tweet_text.innerText : tweet_text.textContent ) : '';
-                    title = ( tweet_text ) ? get_text_from_element( tweet_text ).trim() : '';
-                    
-                    if ( OPTIONS.DISPLAY_OVERLAY || ( is_firefox() && is_extension() ) ) {
-                        // TODO: Firefox 68.0.1 では about:blank の document が「DOMException: "Permission denied to access property "document" on cross-origin object"」となってアクセス不可のため、常にオーバーレイ表示
-                        show_overlay( target_img_urls, tweet_url, title, focused_img_url, tweet, target_all_img_urls );
-                    }
-                    else {
-                        open_page( ( focused_img_url ) ? [ focused_img_url ] : target_img_urls, tweet_url, title );
-                    }
-                }
-                else {
-                    if ( focused_img_url ) {
-                        target_img_urls = [ focused_img_url ];
-                    }
-                    
-                    var window_name = '_blank';
-                    
-                    // TODO: 順に開くと最後の画像タブがアクティブになってしまう
-                    if ( typeof extension_functions != 'undefined' ) {
-                        // 拡張機能の場合には chrome.tabs により制御
-                        extension_functions.open_multi_tabs( target_img_urls );
-                    }
-                    else {
-                        // 逆順にして、最初の画像がアクティブになるようにする
-                        target_img_urls.reverse();
-                        target_img_urls.forEach( function ( img_url, index ) {
-                            w.open( img_url, '_blank' );
-                        } );
-                    }
-                }
+                } )();
                 return false;
             } );
             
@@ -3923,7 +4021,7 @@ function initialize( user_options ) {
                             else if ( img.href ) {
                                 var img_url = normalize_img_url( img.getAttribute( 'data-original-url' ) || get_img_url_from_background( img ) || img.href );
                                 
-                                if ( img_url && /\.(?:jpg|png|gif)/.test( img_url ) ) {
+                                if ( img_url && /\.(?:jpg|png|gif|webp)/.test( img_url ) ) {
                                     button.setAttribute( 'data-target-img-url', get_img_url_orig( img_url ) );
                                     button.click();
                                 }

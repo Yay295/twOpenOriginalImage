@@ -15,8 +15,9 @@ if ( typeof console.log.apply == 'undefined' ) {
 }
 
 const
-    DEBUG = true,
+    DEBUG = false,
     
+    MANIFEST_VERSION = chrome.runtime.getManifest().manifest_version,
     SCRIPT_NAME = 'twOpenOriginalImage',
     DOWNLOAD_MENU_ID = 'download_image',
     DOWNLOAD_TAB_MAP_NAME = SCRIPT_NAME + '-download_tab_map',
@@ -155,16 +156,37 @@ const
         log_debug( 'SAME_FILENAME_AS_IN_ZIP:', SAME_FILENAME_AS_IN_ZIP );
     }, // end of update_context_menu_flags()
     
+    /*
+    //get_url_info = ( url ) => {
+    //    const
+    //        url_obj = new URL( url );
+    //    return {
+    //        base_url : url_obj.origin + url_obj.pathname,
+    //        query_map : [ ... url_obj.searchParams ].reduce( ( query_map, parts ) => {
+    //            query_map[ parts[0] ] = parts[1] ?? ''; // TODO: 同じkeyは上書きされる
+    //            return query_map;
+    //        }, {} ),
+    //    };
+    //}, // end of get_url_info()
+    */
+    // [注意] url は https?:// 以外（画像ファイル名など）の場合あり（※その場合はnew URL(url)とするとエラー発生）
     get_url_info = ( url ) => {
         const
-            url_obj = new URL( url );
-        return {
-            base_url : url_obj.origin + url_obj.pathname,
-            query_map : [ ... url_obj.searchParams ].reduce( ( query_map, parts ) => {
-                query_map[ parts[0] ] = parts[1] ?? ''; // TODO: 同じkeyは上書きされる
-                return query_map;
-            }, {} ),
-        };
+            url_parts = url.split( '?' ),
+            query_map = {},
+            url_info = { base_url : url_parts[ 0 ], query_map : query_map };
+        
+        if ( url_parts.length < 2 ) {
+            return url_info;
+        }
+        
+        url_parts[ 1 ].split( '&' ).forEach( ( query_part ) => {
+            var parts = query_part.split( '=' );
+            
+            query_map[ parts[ 0 ] ] = ( parts.length < 2 ) ? '' : parts[ 1 ];
+        } );
+        
+        return url_info;
     }, // end of get_url_info()
     
     normalize_img_url = ( source_url ) => {
@@ -189,10 +211,30 @@ const
                 formatted_img_url = ( normalized_img_url.match( reg_normalized_image_url ) )
                     ? `${RegExp.$1}?format=${RegExp.$2}${RegExp.$3 ? '&name=' + RegExp.$3 : ''}`
                     : normalized_img_url;
-            log_debug( 'formatted_img_url=', formatted_img_url, normalized_img_url );
+            //log_debug( 'formatted_img_url=', formatted_img_url, normalized_img_url );
             return formatted_img_url;
         };
     } )(), // end of get_formatted_img_url()
+    
+    replace_image_format = ( () => {
+        const
+            reg_format = /([?&]format=)([^&]+)/,
+            reg_normalized_image_url = /^(.+)\.([^.:]+):?((?:[^:]+)?)$/;
+        
+        return ( normalized_img_url, spec_format = 'jpg' ) => {
+            if ( reg_format.test( normalized_img_url ) ) {
+                return normalized_img_url.replace( reg_format, `$1${spec_format}` );
+            }
+            else if ( normalized_img_url.match( reg_normalized_image_url ) ) {
+                const
+                    base_url = RegExp.$1,
+                    format = RegExp.$2,
+                    name = RegExp.$3;
+                return `${base_url}.${spec_format}${name ? ':' + name : ''}`;
+            }
+            return normalized_img_url;
+        };
+    } )(), // end of replace_image_format()
     
     get_filename_from_image_url = ( () => {
         const
@@ -305,15 +347,34 @@ const
                 {
                     img_url_orig,
                     filename,
-                } = ( () => {
+                } = await ( async () => {
                     const
-                        img_url_orig = `${img_url.replace( reg_name_suffix, '' )}:orig`,
-                        filename = get_filename_from_image_url( img_url_orig, link_url );
+                        is_valid_image = async ( img_url ) => {
+                            const
+                                response = await fetch( img_url );
+                            return response.ok;
+                        };
                     
+                    let
+                        img_url_orig = `${img_url.replace( reg_name_suffix, '' )}:orig`;
+                    
+                    if ( ! await is_valid_image( img_url_orig ) ) {
+                        for ( const format of [ 'jpg', 'png', 'gif', 'webp', ] ) {
+                            const
+                                test_img_url = replace_image_format( img_url_orig, format );
+                            if ( test_img_url == img_url_orig ) {
+                                continue;
+                            }
+                            if ( await is_valid_image( test_img_url ) ) {
+                                img_url_orig = test_img_url;
+                                break;
+                            }
+                        }
+                    }
                     return {
                         img_url_orig : get_formatted_img_url( img_url_orig ),
-                        filename,
-                    }
+                        filename : get_filename_from_image_url( img_url_orig, link_url ),
+                    };
                 } )(),
                 do_download = async () => {
                     // ある時点から、ファイル名が変わらなくなった(0.1.7.1000で2017年7月末頃発生・クロスドメインとみなされている模様)
@@ -342,26 +403,35 @@ const
                         return;
                     }
                     
-                    try {
-                        const
-                            response = await fetch( img_url_orig ),
-                            blob = await response.blob(),
-                            blob_url = URL.createObjectURL( blob ),
-                            // - Firefox WebExtension の場合、XMLHttpRequest / fetch() の結果得た Blob を Blob URL に変換した際、PNG がうまくダウンロードできない
-                            //   ※おそらく「次のファイルを開こうとしています…このファイルをどのように処理するか選んでください」のダイアログが background からだと呼び出せないのだと思われる
-                            // - Chrome で、background 内での a[download] によるダウンロードがうまく行かなくなった(バージョン: 65.0.3325.162)
-                            // → 新規にタブを開いてダウンロード処理を行う
-                            tab = await chrome.tabs.create( {
-                                url : `html/download.html?url=${encodeURIComponent( blob_url )}&filename=${encodeURIComponent( filename )}`,
-                                active : false,
-                            } ),
-                            download_tab_map = await get_value( DOWNLOAD_TAB_MAP_NAME ) ?? {};
-                        
-                        download_tab_map[ blob_url ] = tab.id;
-                        await set_value( DOWNLOAD_TAB_MAP_NAME, download_tab_map );
+                    if ( MANIFEST_VERSION < 3 ) {
+                        try {
+                            const
+                                response = await fetch( img_url_orig ),
+                                blob = await response.blob(),
+                                blob_url = URL.createObjectURL( blob ),
+                                // - Firefox WebExtension の場合、XMLHttpRequest / fetch() の結果得た Blob を Blob URL に変換した際、PNG がうまくダウンロードできない
+                                //   ※おそらく「次のファイルを開こうとしています…このファイルをどのように処理するか選んでください」のダイアログが background からだと呼び出せないのだと思われる
+                                // - Chrome で、background 内での a[download] によるダウンロードがうまく行かなくなった(バージョン: 65.0.3325.162)
+                                // → 新規にタブを開いてダウンロード処理を行う
+                                tab = await chrome.tabs.create( {
+                                    url : `html/download.html?url=${encodeURIComponent( blob_url )}&filename=${encodeURIComponent( filename )}`,
+                                    active : false,
+                                } ),
+                                download_tab_map = await get_value( DOWNLOAD_TAB_MAP_NAME ) ?? {};
+                            
+                            download_tab_map[ blob_url ] = tab.id;
+                            await set_value( DOWNLOAD_TAB_MAP_NAME, download_tab_map );
+                        }
+                        catch ( error ) {
+                            log_error( error );
+                            await chrome.downloads.download( {
+                                url : img_url_orig,
+                                filename : filename
+                            } );
+                        }
                     }
-                    catch ( error ) {
-                        log_error( error );
+                    else {
+                        // TODO: Manifest V3(Service Worker)だと、URL.createObjectURL()が使用できない
                         await chrome.downloads.download( {
                             url : img_url_orig,
                             filename : filename

@@ -5,7 +5,7 @@
 window.chrome = ( ( typeof browser != 'undefined' ) && browser.runtime ) ? browser : chrome;
 
 const
-    DEBUG = true,
+    DEBUG = false,
     SCRIPT_NAME = 'twOpenOriginalImage-options';
 
 const
