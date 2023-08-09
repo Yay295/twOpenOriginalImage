@@ -701,7 +701,7 @@ const
                 delete sort_index_to_tab_id_map_map[ request_id ];
             };
         
-        return async ( tab_id, request_id, total, sort_index, callback ) => {
+        return async ( tab_id, requested_tab_id, request_id, total, sort_index, ctrl_key_pushed, callback ) => {
             const
                 sort_index_to_tab_id_map = sort_index_to_tab_id_map_map[ request_id ] = sort_index_to_tab_id_map_map[ request_id ] ?? {};
             
@@ -718,6 +718,17 @@ const
                 sorted_tab_index_list = tab_index_list.slice( 0 ).sort();
             
             await sort_tabs( request_id, sorted_tab_id_list, sorted_tab_index_list );
+            
+            log_debug( `ctrl_key_pushed: ${ctrl_key_pushed}, requested_tab_id: ${requested_tab_id}` );
+            
+            if ( ! ctrl_key_pushed || ( requested_tab_id < 0 ) ) {
+                return;
+            }
+            const
+                activated_tab = await chrome.tabs.update( requested_tab_id, {
+                    active : true,
+                } );
+            log_debug( `tab(id=${requested_tab_id}) is activated`, activated_tab );
         };
     } )(), // end of request_tab_sorting()
     
@@ -738,7 +749,9 @@ const
                         names = ( typeof message.names == 'string' ) ? [ message.names ] : message.names,
                         namespace = message.namespace;
                     
-                    response = {};
+                    response = {
+                        tab_id,
+                    };
                     
                     for ( let name of [ ... names ] ) {
                         name = String( name );
@@ -831,7 +844,7 @@ const
                 log_debug( 'TAB_SORT_REQUEST: tab_id', tab_id, message );
                 if ( tab_id ) {
                     ( async () => {
-                        await request_tab_sorting( tab_id, message.request_id, message.total, message.sort_index );
+                        await request_tab_sorting( tab_id, message.requested_tab_id , message.request_id, message.total, message.sort_index, message.ctrl_key_pushed );
                         response = {
                             message,
                             tab_id,

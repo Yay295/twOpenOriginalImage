@@ -1,16 +1,45 @@
-( function ( w, d ) {
+( ( chrome ) => {
 
 'use strict';
 
-w.chrome = ( ( typeof browser != 'undefined' ) && browser.runtime ) ? browser : chrome;
+const
+    SCRIPT_NAME = 'twOpenOriginalImage',
+    DEBUG = false;
+
+const
+    log_debug = function () {
+        if ( ! DEBUG ) {
+            return;
+        }
+        const
+            arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+        console.log.apply( console, arg_list.concat( [ ... arguments ] ) );
+    }, // end of log_debug()
+    
+    log_info = function () {
+        const
+            arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+        console.info.apply( console, arg_list.concat( [ ... arguments ] ) );
+    }, // end of log_info()
+    
+    log_warn = function () {
+        const
+            arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+        console.warn.apply( console, arg_list.concat( [ ... arguments ] ) );
+    }, // end of log_warn()
+    
+    log_error = function () {
+        const
+            arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+        console.error.apply( console, arg_list.concat( [ ... arguments ] ) );
+    }; // end of log_error()
 
 if ( chrome.runtime.lastError ) {
-    console.log( '* chrome.runtime.lastError.message:', chrome.runtime.lastError.message );
+    log_info( '* chrome.runtime.lastError.message:', chrome.runtime.lastError.message );
 }
 
-var SCRIPT_NAME = 'twOpenOriginalImage';
-
 var current_url = location.href;
+
 
 function get_bool( value ) {
     if ( value === undefined ) {
@@ -44,27 +73,32 @@ function get_text( value ) {
 
 function send_content_scripts_info() {
     // content_scripts の情報を渡す
-    chrome.runtime.sendMessage( {
-        type : 'NOTIFICATION_ONLOAD',
-        info : {
-            url : location.href,
-        }
-    }, function ( response ) {
-        console.debug( 'send_content_scripts_info() response:', response );
-        /*
-        //window.addEventListener( 'beforeunload', function ( event ) {
-        //    // TODO: メッセージが送信できないケース有り ("Uncaught TypeError: Cannot read property 'sendMessage' of undefined")
-        //    chrome.runtime.sendMessage( {
-        //        type : 'NOTIFICATION_ONUNLOAD',
-        //        info : {
-        //            url : location.href,
-        //            event : 'onbeforeunload',
-        //        }
-        //    }, function ( response ) {
-        //    } );
-        //} );
-        */
-    } );
+    try {
+        chrome.runtime.sendMessage( {
+            type : 'NOTIFICATION_ONLOAD',
+            info : {
+                url : location.href,
+            }
+        }, function ( response ) {
+            log_debug( 'send_content_scripts_info() response:', response );
+            /*
+            //window.addEventListener( 'beforeunload', function ( event ) {
+            //    // TODO: メッセージが送信できないケース有り ("Uncaught TypeError: Cannot read property 'sendMessage' of undefined")
+            //    chrome.runtime.sendMessage( {
+            //        type : 'NOTIFICATION_ONUNLOAD',
+            //        info : {
+            //            url : location.href,
+            //            event : 'onbeforeunload',
+            //        }
+            //    }, function ( response ) {
+            //    } );
+            //} );
+            */
+        } );
+    }
+    catch ( error ) {
+        log_error( 'send_content_scripts_info()', error );
+    }
 } // end of send_content_scripts_info()
 
 
@@ -108,7 +142,7 @@ function get_init_function( message_type, option_name_to_function_map, namespace
             if ( current_url == location.href ) return;
             current_url = location.href;
             send_content_scripts_info();
-        } ).observe( d.body, { childList : true, subtree : true } );
+        } ).observe( document.body, { childList : true, subtree : true } );
     }
     
     return init;
@@ -146,7 +180,8 @@ var twOpenOriginalImage_chrome_init = ( function() {
 
 
 var extension_functions = ( () => {
-    var tab_sorting_is_valid = ( ( default_value ) => {
+    var current_tab_id = -1,
+        tab_sorting_is_valid = ( ( default_value ) => {
             chrome.runtime.sendMessage( {
                 type : 'GET_OPTIONS',
                 names : [
@@ -159,54 +194,289 @@ var extension_functions = ( () => {
                 if ( tab_sorting_option_value !== null ) {
                     tab_sorting_is_valid = tab_sorting_option_value;
                 }
+                current_tab_id = response.tab_id;
             } );
             return default_value;
         } )( true ),
         
-        reg_sort_index = new RegExp( '^request=tab_sorting&script_name=' + SCRIPT_NAME + '&request_id=(\\d+)&total=(\\d+)&sort_index=(\\d+)' ),
+        reg_sort_index = new RegExp( `^request=tab_sorting&script_name=${SCRIPT_NAME}&requested_tab_id=([^&]*)&request_id=(\\d+)&total=(\\d+)&ctrl_key_pushed=(true|false)&sort_index=(\\d+)` ),
         
-        open_multi_tabs = ( urls ) => {
+        open_multi_tabs = ( urls, ctrl_key_pushed = false) => {
             var request_id = '' + new Date().getTime(),
-                window_name_prefix = 'request=tab_sorting&script_name=' + SCRIPT_NAME + '&request_id=' + request_id + '&total=' + urls.length + '&sort_index=';
+                window_name_prefix = `request=tab_sorting&script_name=${SCRIPT_NAME}&requested_tab_id=${current_tab_id}&request_id=${request_id}&total=${urls.length}&ctrl_key_pushed=${ctrl_key_pushed}&sort_index=`;
             
             urls.reverse().forEach( ( url, index ) => {
                 var sort_index = urls.length - index,
                     window_name = ( tab_sorting_is_valid ) ? ( window_name_prefix + sort_index ) : '_blank';
                 
-                w.open( url, window_name );
+                window.open( url, window_name );
             } );
         }, // end of open_multi_tabs()
         
         request_tab_sorting = () => {
-            var reg_result = ( w.name || '' ).match( reg_sort_index );
+            var reg_result = ( window.name || '' ).match( reg_sort_index );
             
             if ( ! reg_result ) {
                 return;
             }
             
-            var request_id = reg_result[ 1 ],
-                total = reg_result[ 2 ],
-                sort_index = reg_result[ 3 ];
+            var requested_tab_id = parseInt( reg_result[ 1 ], 10 ),
+                request_id = reg_result[ 2 ],
+                total = reg_result[ 3 ],
+                ctrl_key_pushed = (reg_result[ 4 ] == 'true'),
+                sort_index = reg_result[ 5 ];
             
             chrome.runtime.sendMessage( {
                 type : 'TAB_SORT_REQUEST',
-                request_id : request_id,
-                total : total,
-                sort_index : sort_index,
+                requested_tab_id,
+                request_id,
+                total,
+                sort_index,
+                ctrl_key_pushed,
             }, ( response ) => {
-                //console.log( 'request_tab_sorting() response:', response );
+                //log_info( 'request_tab_sorting() response:', response );
             } );
             
             try {
-                w.name = '';
+                window.name = '';
             }
             catch ( error ) {
             }
         }; // end of request_tab_sorting()
     
+    const
+        tweet_info_map = {},
+        get_tweet_info = ( tweet_id ) => {
+            const
+                tweet_info = tweet_info_map[ tweet_id ];
+            log_debug( 'get_tweet_info():', tweet_id, '=>', tweet_info );
+            return tweet_info;
+        };
+    
+    ( async () => {
+        const
+            reg_graphql_api = new RegExp( '^/i/api/graphql/([^/]+)/([^?]+)' ),
+            
+            is_target_instruction_type = ( instruction ) => ( [ 'TimelineAddEntries', 'TimelinePinEntry', ].includes( instruction.type ) ),
+            
+            append_tweet_info = ( tweet_result ) => {
+                log_debug( 'append_tweet_info(): tweet_result=', tweet_result );
+                const
+                    quoted_result = tweet_result?.quoted_status_result?.result;
+                
+                if ( quoted_result ) {
+                    append_tweet_info( quoted_result );
+                }
+                const
+                    retweed_result = tweet_result?.legacy?.retweeted_status_result?.result,
+                    tweet_result_legacy = ( retweed_result ?? tweet_result )?.legacy ?? {},
+                    user_result_legacy = ( retweed_result ?? tweet_result )?.core?.user_results?.result?.legacy ?? {},
+                    tweet_id = tweet_result_legacy?.id_str,
+                    retweet_id = ( retweed_result ) ? tweet_result?.legacy?.id_str : null,
+                    quoted_tweet_id = quoted_result?.legacy?.id_str ?? null,
+                    media_list = tweet_result_legacy?.extended_entities?.media ?? [],
+                    tweet_info = {
+                        user : {
+                            id : tweet_result_legacy?.user_id_str,
+                            screen_name : user_result_legacy?.screen_name,
+                            name : user_result_legacy?.name,
+                        },
+                        full_text : tweet_result?.note_tweet?.note_tweet_results?.result?.text ?? tweet_result_legacy?.full_text,
+                        created_at : tweet_result_legacy?.created_at,
+                        media_list,
+                        retweet_id,
+                        quoted_tweet_id,
+                        quoted_tweet_url : ( ! quoted_tweet_id ) ? null : ( quoted_result?.legacy?.quoted_status_permalink?.expanded ?? `https://twitter.com/${quoted_result?.core?.user_results?.result?.legacy?.screen_name ?? 'i'}/status/${quoted_tweet_id}` ),
+                    };
+                tweet_info_map[ tweet_id ] = tweet_info;
+                log_debug( 'append_tweet_info(): tweet_id=', tweet_id, tweet_info );
+            },
+            
+            analyze_entry = ( entry ) => {
+                log_debug( 'analyze_entry(): ', entry );
+                const
+                    entryType = entry?.content?.entryType;
+                
+                switch ( entryType ) {
+                    case 'TimelineTimelineItem' : {
+                        const
+                            tweet_result = entry?.content?.itemContent?.tweet_results?.result;
+                        if ( ! tweet_result ) {
+                            log_warn( 'TimelineTimelineItem: tweet_result not found', entry );
+                            break;
+                        }
+                        append_tweet_info( tweet_result );
+                        break;
+                    }
+                    case 'TimelineTimelineModule' : {
+                        ( entry?.content?.items || [] ).map( ( content_item ) => {
+                            const
+                                tweet_result = content_item?.item?.itemContent?.tweet_results?.result;
+                            if ( ! tweet_result ) {
+                                log_warn( 'TimelineTimelineModule: tweet_result not found', entry );
+                                return;
+                            }
+                            append_tweet_info( tweet_result );
+                        } );
+                        break;
+                    }
+                }
+            },
+            
+            graphql_api_operation_name_map = {
+                HomeTimeline : ( response_object ) => {
+                    ( response_object?.data?.home?.home_timeline_urt?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+                
+                HomeLatestTimeline : ( response_object ) => {
+                    ( response_object?.data?.home?.home_timeline_urt?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+                
+                ListLatestTweetsTimeline : ( response_object ) => {
+                    ( response_object?.data?.list?.tweets_timeline?.timeline?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+                
+                UserMedia : ( response_object ) => {
+                    ( response_object?.data?.user?.result?.timeline_v2?.timeline?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+                
+                UserTweets : ( response_object ) => {
+                    ( response_object?.data?.user?.result?.timeline_v2?.timeline?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+                
+                UserTweetsAndReplies : ( response_object ) => {
+                    ( response_object?.data?.user?.result?.timeline_v2?.timeline?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+                
+                Likes : ( response_object ) => {
+                    ( response_object?.data?.user?.result?.timeline_v2?.timeline?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+                
+                UserHighlightsTweets : ( response_object ) => {
+                    ( response_object?.data?.user?.result?.timeline?.timeline?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+                
+                Bookmarks : ( response_object ) => {
+                    ( response_object?.data?.bookmark_timeline_v2?.timeline?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+                
+                ArticleTweetsTimeline : ( response_object ) => {
+                    ( response_object?.data?.article_by_rest_id?.tweets_timeline?.timeline?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+                
+                TweetDetail : ( response_object ) => {
+                    ( response_object?.data?.threaded_conversation_with_injections_v2?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+                
+                SearchTimeline : ( response_object ) => {
+                    ( response_object?.data?.search_by_raw_query?.search_timeline?.timeline?.instructions ?? [] )
+                        .filter( is_target_instruction_type )
+                        .map( ( instruction ) => ( ( instruction?.entry ? [ instruction?.entry ] : instruction?.entries ) ?? [] ).map( ( entry ) => {
+                            analyze_entry( entry );
+                        } ) );
+                },
+            },
+            
+            analyze_graphql_api_result = ( operationName, response_object ) => {
+                log_debug( `[${operationName}] response_object:`, response_object );
+                const
+                    graphql_api_operation = graphql_api_operation_name_map[ operationName ];
+                
+                if ( ! graphql_api_operation ) {
+                    log_debug( `Unsupported operation: ${operationName}`, response_object );
+                    return;
+                }
+                graphql_api_operation( response_object );
+            };
+        
+        window.addEventListener( 'message', ( event ) => {
+            if ( event.origin != location.origin ) {
+                return;
+            }
+            const
+                data = event.data;
+            
+            if ( data?.monitor_id != 'twOpenOriginalImage.tweet-capture' ) {
+                return;
+            }
+            
+            const
+                url_obj = new URL( data.url ),
+                [ api_path, queryId, operationName ] = url_obj.pathname.match( reg_graphql_api ) ?? [ null, null, null ];
+            
+            if ( ! operationName ) {
+                return;
+            }
+            log_debug( `${operationName} : ${data.url}, data=`, data );
+            
+            if ( ! data.response_object ) {
+                return;
+            }
+            analyze_graphql_api_result( operationName, data.response_object );
+        } );
+        
+        let
+            injected_script_infos;
+        
+        injected_script_infos = await window.inject_script_all( [
+            'js/xhr_monitor.js',
+        ] );
+        log_debug( '[js/xhr_monitor.js]', injected_script_infos);
+        
+        injected_script_infos = await window.inject_script_all( [
+            'js/set_xhr_monitor.js',
+        ] );
+        log_debug( '[js/set_xhr_monitor.js]', injected_script_infos);
+    } )();
+    
     return {
-        open_multi_tabs : open_multi_tabs,
-        request_tab_sorting : request_tab_sorting,
+        open_multi_tabs,
+        request_tab_sorting,
+        get_tweet_info,
     };
 } )(); // end of extension_functions
 
@@ -231,20 +501,20 @@ chrome.runtime.onMessage.addListener( function ( message, sender, sendResponse )
                         saveAs( blob, message.filename );
                     }
                     else {
-                        var link = d.createElement('a');
+                        var link = document.createElement('a');
                         
                         link.href = URL.createObjectURL( blob );
                         link.download = message.filename;
-                        d.documentElement.appendChild( link );
+                        document.documentElement.appendChild( link );
                         link.click(); // TweetDeck だと、ダウンロードできない（ダウンロードが無効化されるイベントが設定されてしまう）=> saveAs() が有効ならばそちらを使用
-                        d.documentElement.removeChild( link );
+                        document.documentElement.removeChild( link );
                     }
                     sendResponse( {
                         result : 'OK'
                     } );
                 }
                 catch( error ) {
-                    console.error( 'save image error:', error, message.img_url_orig, blob );
+                    log_error( 'save image error:', error, message.img_url_orig, blob );
                     sendResponse( {
                         result : 'NG',
                         message : 'save image error'
@@ -252,7 +522,7 @@ chrome.runtime.onMessage.addListener( function ( message, sender, sendResponse )
                 }
             } )
             .catch( ( error ) => {
-                console.error( 'fetch() error:', error, message.img_url_orig );
+                log_error( 'fetch() error:', error, message.img_url_orig );
                 sendResponse( {
                     result : 'NG',
                     message : 'fetch() error'
@@ -285,11 +555,11 @@ if ( /^https?:\/\/pbs\.twimg\.com\/media\//.test( location.href ) ) {
     extension_functions.request_tab_sorting();
 }
 
-w.twOpenOriginalImage_chrome_init = twOpenOriginalImage_chrome_init;
-w.extension_functions = extension_functions;
+window.twOpenOriginalImage_chrome_init = twOpenOriginalImage_chrome_init;
+window.extension_functions = extension_functions;
 
 send_content_scripts_info();
 
-} )( window, document );
+} )( ( ( typeof browser != 'undefined' ) && browser.runtime ) ? browser : chrome );
 
 // ■ end of file

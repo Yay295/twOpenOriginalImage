@@ -4,7 +4,7 @@
 // @namespace       http://furyu.hatenablog.com/
 // @author          furyu
 // @license         MIT
-// @version         0.1.9.1
+// @version         0.1.10
 // @include         http://twitter.com/*
 // @include         https://twitter.com/*
 // @include         https://mobile.twitter.com/*
@@ -865,45 +865,53 @@ function is_tweet_detail_on_react_twitter( tweet ) {
     // ※ [2019.08.07] article[data-testid="tweetDetail"] は無くなり、article[role="article"] に置き換わっている
     //return ! tweet.querySelector( 'a[role="link"][href^="/"][href*="/status/"] time' );
     // ※ TODO: 個別ツイートを判別方法要検討（暫定的に、個別ツイートへのリンク(タイムスタンプ)有無で判定）
-    return !! tweet.querySelector('a[role="link"][href*="/status/"] ~ a[role="link"][href*="/help.twitter.com/"]');
+    //return !! tweet.querySelector('a[role="link"][href*="/status/"] ~ a[role="link"][href*="/help.twitter.com/"]');
     // [2022.09] 個別ツイートでも 'a[role="link"][href^="/"][href*="/status/"] time' でマッチするようになったため、判定方法変更
+    const
+        location_tweet_id = get_tweet_id_from_tweet_url( location.href ),
+        timestamp_container = tweet.querySelector( 'a[role="link"][href^="/"][href*="/status/"] time' ),
+        tweet_link = timestamp_container ? search_ancestor_by_attribute( timestamp_container, 'role', 'link' ) : null,
+        tweet_id = get_tweet_id_from_tweet_url( tweet_link?.href ?? '' );
+    log_debug( ( location_tweet_id == tweet_id ), `location_tweet_id=${location_tweet_id} vs tweet_id=${tweet_id}` );
+    return ( location_tweet_id == tweet_id );
+    // [2023.08] a[role="link"][href*="/help.twitter.com/"]が存在しなくなっている／自身へのリンクは存在
 } // end of is_tweet_detail_on_react_twitter()
 
 
 function get_tweet_link_on_react_twitter( tweet ) {
     var tweet_link,
-        timestamp_container = tweet.querySelector( 'a[role="link"][href^="/"][href*="/status/"] time' );
+        timestamp_container = tweet.querySelector( 'a[role="link"][href^="/"][href*="/status/"] time:last-of-type' );
     
     if ( timestamp_container ) {
         tweet_link = search_ancestor_by_attribute( timestamp_container, 'role', 'link' );
     }
-    
-    if ( ( ! tweet_link ) || is_tweet_detail_on_react_twitter( tweet ) ) {
-        tweet_link = null;
-        // ※個別ツイートを表示した場合、自身へのリンクが無い→ページのURLをhrefに持つリンクをダミーで作成し、ツイートソースラベルの前に挿入
-        var tweet_url = w.location.href.replace( /[?#].*/g, '' ),
-            tweet_source_label = tweet.querySelector( 'a[role="link"][href*="/help.twitter.com/"]' );
-        
-        if ( tweet_source_label ) {
-            tweet_link = tweet_source_label.parentNode.querySelector( '.' + SCRIPT_NAME + '_tweetdetail_link' );
-        }
-        
-        if ( ! tweet_link ) {
-            tweet_link = d.createElement( 'a' );
-            tweet_link.className = SCRIPT_NAME + '_tweetdetail_link';
-            tweet_link.setAttribute( 'role', 'link' );
-            tweet_link.style.display = 'none';
-            
-            if ( tweet_url.match( /\/status(?:es)?\// ) ) {
-                tweet_link.setAttribute( 'href', tweet_url );
-            }
-            
-            if ( tweet_source_label ) {
-                tweet_source_label.parentNode.insertBefore( tweet_link, tweet_source_label );
-            }
-        }
-    }
-    
+    /*
+    //if ( ( ! tweet_link ) || is_tweet_detail_on_react_twitter( tweet ) ) {
+    //    tweet_link = null;
+    //    // ※個別ツイートを表示した場合、自身へのリンクが無い→ページのURLをhrefに持つリンクをダミーで作成し、ツイートソースラベルの前に挿入
+    //    var tweet_url = w.location.href.replace( /[?#].*$/g, '' ),
+    //        tweet_source_label = tweet.querySelector( 'a[role="link"][href*="/help.twitter.com/"]' );
+    //    
+    //    if ( tweet_source_label ) {
+    //        tweet_link = tweet_source_label.parentNode.querySelector( '.' + SCRIPT_NAME + '_tweetdetail_link' );
+    //    }
+    //    
+    //    if ( ! tweet_link ) {
+    //        tweet_link = d.createElement( 'a' );
+    //        tweet_link.className = SCRIPT_NAME + '_tweetdetail_link';
+    //        tweet_link.setAttribute( 'role', 'link' );
+    //        tweet_link.style.display = 'none';
+    //        
+    //        if ( tweet_url.match( /\/status(?:es)?\// ) ) {
+    //            tweet_link.setAttribute( 'href', tweet_url );
+    //        }
+    //        
+    //        if ( tweet_source_label ) {
+    //            tweet_source_label.parentNode.insertBefore( tweet_link, tweet_source_label );
+    //        }
+    //    }
+    //}
+    */
     return tweet_link;
 } // end of get_tweet_link_on_react_twitter()
 
@@ -1294,11 +1302,27 @@ function download_zip( tweet_info_json ) {
             }
             
             if ( fullname && username ) {
-                var tweet_info_text = [
+                var media_list = ( result?.media_list || [] ).filter( ( media_info ) => ( media_info.type == 'photo' ) );
+                if ( ( result.quoted_tweet_id ) && ( typeof extension_functions != 'undefined' ) ) {
+                    const
+                        quoted_tweet_info = extension_functions.get_tweet_info( result.quoted_tweet_id );
+                    
+                    media_list = media_list.concat( ( quoted_tweet_info?.media_list || [] ).filter( ( media_info ) => ( media_info.type == 'photo' ) ) );
+                }
+                var media_text = ( media_list.length < 1 ) ? img_urls.join( '\n' ) : media_list.map( ( media_info ) => {
+                        const
+                            text_list = [ media_info.media_url_https ],
+                            media_alt_text = media_info.ext_alt_text;
+                        if ( media_alt_text ) {
+                            text_list.push( `[Alt]\n${media_alt_text}` );
+                        }
+                        return text_list.join( '\n' );
+                    } ).join( '\n' ),
+                    tweet_info_text = [
                         tweet_url,
                         fullname + '\n@' + username + '\n' + datetime_string,
-                        title,
-                        img_urls.join( '\n' ),
+                        title + ( result?.quoted_tweet_url ? '\n\n' + result.quoted_tweet_url : '' ),
+                        media_text,
                     ].join( '\n\n' ) + '\n';
                 
                 zip.file( filename_prefix + '.txt', tweet_info_text, {
@@ -1404,6 +1428,16 @@ function download_zip( tweet_info_json ) {
             } );
             
         };
+    
+    if ( typeof extension_functions != 'undefined' ) {
+        const
+            result = extension_functions.get_tweet_info( tweet_id );
+        
+        if ( result ) {
+            callback( result, false );
+            return true;
+        }
+    }
     
     fetch_status( tweet_id )
     .then( result => {
@@ -3837,11 +3871,15 @@ function initialize( user_options ) {
                 
                 var focused_img_url = button.getAttribute( 'data-target-img-url' ),
                     alt_key_pushed = event.altKey || ( button.getAttribute( 'data-event-alt-key' ) == 'yes' ),
+                    ctrl_key_pushed = event.ctrlKey || ( button.getAttribute( 'data-event-ctrl-key' ) == 'yes' ),
+                    shift_key_pushed = event.shiftKey || ( button.getAttribute( 'data-event-shift-key' ) == 'yes' ),
                     target_img_urls = img_urls.slice( 0 ),
                     target_all_img_urls = all_img_urls.slice( 0 );
                 
                 button.removeAttribute( 'data-target-img-url' );
                 button.removeAttribute( 'data-event-alt-key' );
+                button.removeAttribute( 'data-event-ctrl-key' );
+                button.removeAttribute( 'data-event-shift-key' );
                 
                 ( async () => {
                     if ( focused_img_url ) {
@@ -3901,7 +3939,7 @@ function initialize( user_options ) {
                         // TODO: 順に開くと最後の画像タブがアクティブになってしまう
                         if ( typeof extension_functions != 'undefined' ) {
                             // 拡張機能の場合には chrome.tabs により制御
-                            extension_functions.open_multi_tabs( target_img_urls );
+                            extension_functions.open_multi_tabs( target_img_urls, ctrl_key_pushed );
                         }
                         else {
                             // 逆順にして、最初の画像がアクティブになるようにする
@@ -4013,6 +4051,8 @@ function initialize( user_options ) {
                             event.preventDefault();
                             
                             button.setAttribute( 'data-event-alt-key', event.altKey ? 'yes' : 'no' );
+                            button.setAttribute( 'data-event-ctrl-key', event.ctrlKey ? 'yes' : 'no' );
+                            button.setAttribute( 'data-event-shift-key', event.shiftKey ? 'yes' : 'no' );
                             
                             if ( img.src ) {
                                 button.setAttribute( 'data-target-img-url', get_img_url_orig( img.src ) );
@@ -4437,6 +4477,8 @@ function initialize( user_options ) {
         event.preventDefault();
         
         button.setAttribute( 'data-event-alt-key', event.altKey ? 'yes' : 'no' );
+        button.setAttribute( 'data-event-ctrl-key', event.ctrlKey ? 'yes' : 'no' );
+        button.setAttribute( 'data-event-shift-key', event.shiftKey ? 'yes' : 'no' );
         button.click();
         
         return false;
