@@ -1303,7 +1303,7 @@ function download_zip( tweet_info_json ) {
             
             if ( fullname && username ) {
                 var media_list = ( result?.media_list || [] ).filter( ( media_info ) => ( media_info.type == 'photo' ) );
-                if ( ( result.quoted_tweet_id ) && ( typeof extension_functions != 'undefined' ) ) {
+                if ( ( result.quoted_tweet_id ) && ( typeof extension_functions?.get_tweet_info != 'undefined' ) ) {
                     const
                         quoted_tweet_info = extension_functions.get_tweet_info( result.quoted_tweet_id );
                     
@@ -1429,7 +1429,7 @@ function download_zip( tweet_info_json ) {
             
         };
     
-    if ( typeof extension_functions != 'undefined' ) {
+    if ( typeof extension_functions?.get_tweet_info == 'function' ) {
         const
             result = extension_functions.get_tweet_info( tweet_id );
         
@@ -1438,16 +1438,33 @@ function download_zip( tweet_info_json ) {
             return true;
         }
     }
-    
-    fetch_status( tweet_id )
-    .then( result => {
-        callback( result, false );
-    } )
-    .catch( error => {
-        log_error( 'download_zip() fetch_status() error:', error );
-        callback( error, true );
-    } );
-    
+    if ( typeof extension_functions?.async_get_tweet_info == 'function' ) {
+        ( async () => {
+            const
+                result = await extension_functions.async_get_tweet_info( tweet_id );
+            
+            if ( result ) {
+                callback( result, false );
+            }
+            else {
+                const
+                    error_message = 'download_zip() extension_functions.async_get_tweet_info() failure';
+                callback( {
+                    error_message,
+                }, true );
+            }
+        } )();
+    }
+    else {
+        fetch_status( tweet_id )
+        .then( result => {
+            callback( result, false );
+        } )
+        .catch( error => {
+            log_error( 'download_zip() fetch_status() error:', error );
+            callback( error, true );
+        } );
+    }
     return true;
 } // end of download_zip()
 

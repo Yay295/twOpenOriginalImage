@@ -244,21 +244,54 @@ var extension_functions = ( () => {
             }
         }; // end of request_tab_sorting()
     
-    const
-        tweet_info_map = {},
-        get_tweet_info = ( tweet_id ) => {
-            const
-                tweet_info = tweet_info_map[ tweet_id ];
-            log_debug( 'get_tweet_info():', tweet_id, '=>', tweet_info );
-            return tweet_info;
-        };
-    
     ( async () => {
         const
             reg_graphql_api = new RegExp( '^/i/api/graphql/([^/]+)/([^?]+)' ),
             
             is_target_instruction_type = ( instruction ) => ( [ 'TimelineAddEntries', 'TimelinePinEntry', ].includes( instruction.type ) ),
             
+            tweet_info_map = {},
+            
+            get_tweet_info = ( tweet_id ) => {
+                const
+                    tweet_info = tweet_info_map[ tweet_id ];
+                log_debug( 'get_tweet_info():', tweet_id, '=>', tweet_info );
+                return tweet_info ?? null;
+            },
+            
+            async_get_tweet_info = async ( tweet_id ) => {
+                const
+                    operationName = 'TweetDetail',
+                    result = await window.tweet_api.call_graphql_api( {
+                        operationName : `${operationName}`,
+                        query_params : {
+                            variables : JSON.stringify( {
+                                'focalTweetId' : `${tweet_id}`,
+                                'with_rux_injections' : false,
+                                'includePromotedContent' : true,
+                                'withCommunity' : true,
+                                'withQuickPromoteEligibilityTweetFields' : true,
+                                'withBirdwatchNotes' : true,
+                                'withVoice' : true,
+                                'withV2Timeline' : true,
+                            } ),
+                        }
+                    } ).then( ( response ) => response.json() ).then( ( response_object ) => ( {
+                        response_object : response_object,
+                    } ) ).catch( ( error ) => ( {
+                        error : error,
+                    } ) );
+                
+                if ( result.error ) {
+                    log_error( 'tweet_api.call_graphql_api() error:', result.error );
+                    return null;
+                }
+                
+                analyze_graphql_api_result( operationName, result.response_object );
+                
+                return get_tweet_info( tweet_id );
+            },
+
             append_tweet_info = ( tweet_result ) => {
                 log_debug( 'append_tweet_info(): tweet_result=', tweet_result );
                 const
@@ -471,13 +504,22 @@ var extension_functions = ( () => {
             'js/set_xhr_monitor.js',
         ] );
         log_debug( '[js/set_xhr_monitor.js]', injected_script_infos);
+        
+        Object.assign( extension_functions, {
+            get_tweet_info,
+            async_get_tweet_info,
+        } );
     } )();
     
-    return {
-        open_multi_tabs,
-        request_tab_sorting,
-        get_tweet_info,
-    };
+    const
+        extension_functions = {
+            open_multi_tabs,
+            request_tab_sorting,
+            get_tweet_info : null,
+            async_get_tweet_info : null,
+        };
+    
+    return extension_functions;
 } )(); // end of extension_functions
 
 

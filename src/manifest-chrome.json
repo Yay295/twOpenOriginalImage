@@ -2,7 +2,7 @@
     "manifest_version" : 3,
     "name" : "__MSG_ext_title__",
     "short_name" : "__MSG_ext_short_name__",
-    "version" : "0.1.10.1",
+    "version" : "0.1.10.2",
     "description" : "__MSG_ext_description__",
     "author" : "furyu",
     "default_locale" : "en",
@@ -15,7 +15,7 @@
     "content_scripts" : [
         {
             "matches" : [ "*://twitter.com/*", "*://pbs.twimg.com/media/*", "*://tweetdeck.twitter.com/*", "*://mobile.twitter.com/*" ],
-            "js" : [ "js/jszip.min.js", "js/FileSaver.min.js", "js/inject_script.js", "js/init.js" ],
+            "js" : [ "js/jszip.min.js", "js/FileSaver.min.js", "js/inject_script.js", "js/tweet_api.js", "js/init.js" ],
             "run_at" : "document_start",
             "all_frames" : true
         },
