@@ -39,7 +39,6 @@ xhr_prototype.open = function (method, url, async, user, password) {
                     return headers;
                 }, {}),
                 response = xhr.response,
-                response_text = xhr.responseText,
                 data = {
                     url,
                     method,
@@ -48,12 +47,14 @@ xhr_prototype.open = function (method, url, async, user, password) {
                     response_url,
                     response_headers,
                     response,
-                    response_text,
                 };
             
             switch (xhr.responseType) {
                 case '':
                 case 'text' : {
+                    const
+                        response_text = xhr.responseText;
+                    data.response_text = response_text;
                     try {
                         data.response_object = JSON.parse(response_text);
                     }
@@ -63,6 +64,11 @@ xhr_prototype.open = function (method, url, async, user, password) {
                 }
                 case 'json' : {
                     data.response_object = response;
+                    try {
+                        data.response_text = xhr.responseText;
+                    }
+                    catch ( error ) {
+                    }
                     break;
                 }
                 default : {
