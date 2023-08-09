@@ -4,7 +4,9 @@ const // 参照: [Firefox のアドオン(content_scripts)でXMLHttpRequestやfe
     fetch = (typeof content != 'undefined' && typeof content.fetch == 'function') ? content.fetch  : window.fetch;
 
 const
-    api_script_selector = 'script[src*="/responsive-web/client-web/api."]',
+    tweet_api = {
+        call_graphql_api : null,
+    },
     html = await fetch(location.href).then((response) => {
         if (! response.ok) {
             throw new Error(`${response.status} ${response.statusText}`);
@@ -12,15 +14,21 @@ const
         return response.text();
     }).catch((error) => console.error(error));
 if (! html) {
+    window.tweet_api = Object.assign(tweet_api, {
+        register_error: `fetch(${location.href}) error`,
+    });
     return;
 }
 
 const
-    api_script_key = html.match(/"?api"?\s*:\s*"([^"]+)"/)[1],
-    api_script_suffix = html.match(/\s*\+\s*"([^".]+\.js)"/)[1];
+    api_script_key = (html.match(/"?api"?\s*:\s*"([^"]+)"/) ?? [])[1],
+    api_script_suffix = (html.match(/\s*\+\s*"([^".]+\.js)"/) ?? [])[1];
 console.debug(`api_script_key: ${api_script_key}, api_script_suffix: ${api_script_suffix}`);
 if ((! api_script_key) || (! api_script_suffix)) {
     // 旧TweetDeck(Cookieのtweetdeck_version=legacy)だと存在しない
+    window.tweet_api = Object.assign(tweet_api, {
+        register_error: 'api_script_key is not found',
+    });
     return;
 }
 
@@ -36,6 +44,9 @@ const
         return response.text();
     }).catch((error) => console.error(error));
 if (! api_js_text) {
+    window.tweet_api = Object.assign(tweet_api, {
+        register_error: `fetch(${api_script}) error`,
+    });
     return;
 }
 
@@ -106,7 +117,8 @@ const
 
 console.debug('operationName_map:', operationName_map);
 
-window.tweet_api = {
+window.tweet_api = Object.assign(tweet_api, {
     call_graphql_api,
-};
+});
+
 })();

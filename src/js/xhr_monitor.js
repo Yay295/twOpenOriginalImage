@@ -19,7 +19,26 @@ xhr_prototype.open = function (method, url, async, user, password) {
     const
         xhr = this;
     
-    if (async !== false) {
+    (() => {
+        if (async === false) {
+            return;
+        }
+        
+        const
+            target_monitor_infos = Object.entries(monitor_info_map).filter(([monitor_id, monitor_info]) => {
+                if (! (monitor_info.method_list ?? ['GET',]).includes((method ?? 'GET').toUpperCase())) {
+                    return false;
+                }
+                if (! new RegExp(monitor_info.url_filter_reg).test(url ?? '')) {
+                    return false;
+                }
+                return true;
+            });
+        
+        if (target_monitor_infos.length < 1) {
+            return;
+        }
+        
         xhr.addEventListener('readystatechange', function (event) {
             if (xhr.readyState != 4) {
                 return;
@@ -67,7 +86,7 @@ xhr_prototype.open = function (method, url, async, user, password) {
                     try {
                         data.response_text = xhr.responseText;
                     }
-                    catch ( error ) {
+                    catch (error) {
                     }
                     break;
                 }
@@ -76,15 +95,8 @@ xhr_prototype.open = function (method, url, async, user, password) {
                 }
             }
             
-            Object.entries(monitor_info_map).map(([monitor_id, monitor_info]) => {
+            target_monitor_infos.map(([monitor_id, monitor_info]) => {
                 try {
-                    if (! (monitor_info.method_list ?? ['GET',]).includes((method ?? 'GET').toUpperCase())) {
-                        return;
-                    }
-                    if (! new RegExp(monitor_info.url_filter_reg).test(url ?? '')) {
-                        return;
-                    }
-                    
                     window.postMessage(Object.assign(data, {
                         monitor_id,
                     }), window.location.origin);
@@ -94,7 +106,8 @@ xhr_prototype.open = function (method, url, async, user, password) {
                 }
             });
         });
-    }
+    })();
+    
     return original_prototype_open.apply(xhr, arguments);
 };
 

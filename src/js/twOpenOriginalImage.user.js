@@ -4,7 +4,7 @@
 // @namespace       http://furyu.hatenablog.com/
 // @author          furyu
 // @license         MIT
-// @version         0.1.11
+// @version         0.1.12
 // @include         http://twitter.com/*
 // @include         https://twitter.com/*
 // @include         https://mobile.twitter.com/*
@@ -929,11 +929,14 @@ function get_text_from_element( element ) {
 
 
 function fetch_status( tweet_id ) {
+    const
+        //auth_bearer = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
+        auth_bearer = 'AAAAAAAAAAAAAAAAAAAAAF7aAAAAAAAASCiRjWvh7R5wxaKkFp7MM%2BhYBqM%3DbQ0JPmjU9F6ZoMhDfI4uTNAaQuTDm2uO9x3WFVr2xBZ2nhjdP0';
     return fetch(
         ( is_react_twitter() ? 'https://twitter.com/i/api' : 'https://api.twitter.com' ) + '/1.1/statuses/show.json?include_my_retweet=true&include_entities=true&trim_user=false&include_ext_alt_text=true&include_card_uri=true&tweet_mode=extended&id=' + encodeURIComponent( tweet_id ), {
         method: 'GET',
         headers: {
-            'authorization' : 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+            'authorization' : `Bearer ${auth_bearer}`,
             'x-csrf-token' : document.cookie.match( /ct0=(.*?)(?:;|$)/ )[ 1 ],
             'x-twitter-active-user' : 'yes',
             'x-twitter-auth-type' : 'OAuth2Session',
@@ -1303,7 +1306,7 @@ function download_zip( tweet_info_json ) {
             
             if ( fullname && username ) {
                 var media_list = ( result?.media_list || [] ).filter( ( media_info ) => ( media_info.type == 'photo' ) );
-                if ( ( result.quoted_tweet_id ) && ( typeof extension_functions != 'undefined' ) && ( typeof extension_functions?.get_tweet_info == 'function' ) ) {
+                if ( ( result.quoted_tweet_id ) && ( typeof window?.extension_functions?.get_tweet_info == 'function' ) ) {
                     const
                         quoted_tweet_info = extension_functions.get_tweet_info( result.quoted_tweet_id );
                     
@@ -1429,16 +1432,7 @@ function download_zip( tweet_info_json ) {
             
         };
     
-    if ( ( typeof extension_functions != 'undefined' ) && ( typeof extension_functions?.get_tweet_info == 'function' ) ) {
-        const
-            result = extension_functions.get_tweet_info( tweet_id );
-        
-        if ( result ) {
-            callback( result, false );
-            return true;
-        }
-    }
-    if ( ( typeof extension_functions != 'undefined' ) && ( typeof extension_functions?.async_get_tweet_info == 'function' ) ) {
+    if ( typeof window?.extension_functions?.async_get_tweet_info == 'function' ) {
         ( async () => {
             const
                 result = await extension_functions.async_get_tweet_info( tweet_id );

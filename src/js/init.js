@@ -4,7 +4,8 @@
 
 const
     SCRIPT_NAME = 'twOpenOriginalImage',
-    DEBUG = false;
+    DEBUG = false,
+    USE_XHR_MONITOR = false;
 
 const
     log_debug = function () {
@@ -70,34 +71,48 @@ function get_text( value ) {
     return String( value );
 } // end of get_text()
 
-
-function send_content_scripts_info() {
-    // content_scripts の情報を渡す
-    try {
-        chrome.runtime.sendMessage( {
-            type : 'NOTIFICATION_ONLOAD',
-            info : {
-                url : location.href,
-            }
-        }, function ( response ) {
-            log_debug( 'send_content_scripts_info() response:', response );
-            /*
-            //window.addEventListener( 'beforeunload', function ( event ) {
-            //    // TODO: メッセージが送信できないケース有り ("Uncaught TypeError: Cannot read property 'sendMessage' of undefined")
-            //    chrome.runtime.sendMessage( {
-            //        type : 'NOTIFICATION_ONUNLOAD',
-            //        info : {
-            //            url : location.href,
-            //            event : 'onbeforeunload',
-            //        }
-            //    }, function ( response ) {
-            //    } );
-            //} );
-            */
+const
+    async_wait = ( wait_msec ) => {
+        return new Promise( (resolve, reject) => {
+            setTimeout( () => {
+                resolve( wait_msec );
+            }, wait_msec );
         } );
-    }
-    catch ( error ) {
-        log_error( 'send_content_scripts_info()', error );
+    };
+
+async function send_content_scripts_info() {
+    // content_scripts の情報を渡す
+    /*
+    //window.addEventListener( 'beforeunload', function ( event ) {
+    //    // TODO: メッセージが送信できないケース有り ("Uncaught TypeError: Cannot read property 'sendMessage' of undefined")
+    //    chrome.runtime.sendMessage( {
+    //        type : 'NOTIFICATION_ONUNLOAD',
+    //        info : {
+    //            url : location.href,
+    //            event : 'onbeforeunload',
+    //        }
+    //    }, function ( response ) {
+    //    } );
+    //} );
+    */
+    for ( let ci = 0; ci < 3; ci ++ ) { // [メモ] backgroundの処理を(async() => {…})(); に変更(2023/08/07)→受信準備ができていない場合にエラーになるため、リトライ
+        try {
+            const
+                response = await chrome.runtime.sendMessage( {
+                    type : 'NOTIFICATION_ONLOAD',
+                    info : {
+                        url : location.href,
+                    }
+                } );
+            log_debug( 'send_content_scripts_info(): sendMessage(NOTIFICATION_ONLOAD) response:', response );
+            if ( response ) {
+                break;
+            }
+        }
+        catch ( error ) {
+            log_error( 'send_content_scripts_info(): sendMessage(NOTIFICATION_ONLOAD) error', error );
+        }
+        await async_wait( 100 );
     }
 } // end of send_content_scripts_info()
 
@@ -126,25 +141,36 @@ function get_init_function( message_type, option_name_to_function_map, namespace
         return options;
     }
     
-    function init( callback ) {
-        // https://developer.chrome.com/extensions/runtime#method-sendMessage
-
-        chrome.runtime.sendMessage( {
-            type : message_type
-        ,   names : option_names
-        ,   namespace :  ( namespace ) ? namespace : ''
-        }, function ( response ) {
-            var options = analyze_response( response );
-            callback( options );
-        } );
-        
+    async function init( callback ) {
         new MutationObserver( ( records ) => {
             if ( current_url == location.href ) return;
             current_url = location.href;
             send_content_scripts_info();
         } ).observe( document.body, { childList : true, subtree : true } );
+        
+        for ( let ci = 0; ci < 3; ci++ ) { // [メモ] backgroundの処理を(async() => {…})(); に変更(2023/08/07)→受信準備ができていない場合にエラーになるため、リトライ
+            try {
+                const
+                    // https://developer.chrome.com/extensions/runtime#method-sendMessage
+                    response = await chrome.runtime.sendMessage( {
+                        type : message_type
+                    ,   names : option_names
+                    ,   namespace :  ( namespace ) ? namespace : ''
+                    } );
+                log_debug( `init(): sendMessage(${message_type}) response:`, response );
+                if ( response ) {
+                    const
+                        options = analyze_response( response );
+                        callback( options );
+                    break;
+                }
+            }
+            catch ( error ) {
+                log_error( `init(): sendMessage(${message_type}) error`, error );
+            }
+            await async_wait( 100 );
+        }
     }
-    
     return init;
 } // end of get_init_function()
 
@@ -182,20 +208,34 @@ var twOpenOriginalImage_chrome_init = ( function() {
 var extension_functions = ( () => {
     var current_tab_id = -1,
         tab_sorting_is_valid = ( ( default_value ) => {
-            chrome.runtime.sendMessage( {
-                type : 'GET_OPTIONS',
-                names : [
-                    'TAB_SORTING',
-                ],
-            }, ( response ) => {
-                // ※オプションは非同期取得となるが、ユーザーがアクションを起こすまでに余裕があるので気にしない
-                var tab_sorting_option_value = get_bool( response[ 'TAB_SORTING' ] );
-                
-                if ( tab_sorting_option_value !== null ) {
-                    tab_sorting_is_valid = tab_sorting_option_value;
+            ( async () => {
+                for ( let ci = 0; ci < 3; ci++ ) { // [メモ] backgroundの処理を(async() => {…})(); に変更(2023/08/07)→受信準備ができていない場合にエラーになるため、リトライ
+                    try {
+                        const
+                            response = await chrome.runtime.sendMessage( {
+                                type : 'GET_OPTIONS',
+                                names : [
+                                    'TAB_SORTING',
+                                ],
+                            } );
+                        log_debug( 'sendMessage(GET_OPTIONS.TAB_SORTING) response:', response );
+                        if ( response ) {
+                            // ※オプションは非同期取得となるが、ユーザーがアクションを起こすまでに余裕があるので気にしない
+                            var tab_sorting_option_value = get_bool( response[ 'TAB_SORTING' ] );
+                            
+                            if ( tab_sorting_option_value !== null ) {
+                                tab_sorting_is_valid = tab_sorting_option_value;
+                            }
+                            current_tab_id = response.tab_id;
+                            break;
+                        }
+                    }
+                    catch ( error ) {
+                        log_debug( 'sendMessage(GET_OPTIONS.TAB_SORTING) error:', error );
+                    }
+                    await async_wait( 100 );
                 }
-                current_tab_id = response.tab_id;
-            } );
+            } )();
             return default_value;
         } )( true ),
         
@@ -226,16 +266,29 @@ var extension_functions = ( () => {
                 ctrl_key_pushed = (reg_result[ 4 ] == 'true'),
                 sort_index = reg_result[ 5 ];
             
-            chrome.runtime.sendMessage( {
-                type : 'TAB_SORT_REQUEST',
-                requested_tab_id,
-                request_id,
-                total,
-                sort_index,
-                ctrl_key_pushed,
-            }, ( response ) => {
-                //log_info( 'request_tab_sorting() response:', response );
-            } );
+            ( async () => {
+                for ( let ci = 0; ci < 3; ci++ ) {
+                    try {
+                        const
+                            response = await chrome.runtime.sendMessage( {
+                                type : 'TAB_SORT_REQUEST',
+                                requested_tab_id,
+                                request_id,
+                                total,
+                                sort_index,
+                                ctrl_key_pushed,
+                            } );
+                        log_debug( 'request_tab_sorting(): sendMessage(TAB_SORT_REQUEST) response:', response );
+                        if ( response ) {
+                            break;
+                        }
+                    }
+                    catch ( error ) {
+                        log_error( 'request_tab_sorting(): sendMessage(TAB_SORT_REQUEST) error:', error );
+                    }
+                    await async_wait( 100 );
+                }
+            } )();
             
             try {
                 window.name = '';
@@ -243,6 +296,14 @@ var extension_functions = ( () => {
             catch ( error ) {
             }
         }; // end of request_tab_sorting()
+    
+    const
+        extension_functions = {
+            open_multi_tabs,
+            request_tab_sorting,
+            get_tweet_info : null,
+            async_get_tweet_info : null,
+        };
     
     ( async () => {
         const
@@ -260,6 +321,13 @@ var extension_functions = ( () => {
             },
             
             async_get_tweet_info = async ( tweet_id ) => {
+                const
+                    tweet_info = get_tweet_info( tweet_id );
+                
+                if ( tweet_info ) {
+                    return tweet_info;
+                }
+                
                 const
                     operationName = 'TweetDetail',
                     result = await window.tweet_api.call_graphql_api( {
@@ -466,58 +534,62 @@ var extension_functions = ( () => {
                 graphql_api_operation( response_object );
             };
         
-        window.addEventListener( 'message', ( event ) => {
-            if ( event.origin != location.origin ) {
-                return;
-            }
-            const
-                data = event.data;
+        if ( USE_XHR_MONITOR ) {
+            window.addEventListener( 'message', ( event ) => {
+                if ( event.origin != location.origin ) {
+                    return;
+                }
+                const
+                    data = event.data;
+                
+                if ( data?.monitor_id != 'twOpenOriginalImage.tweet-capture' ) {
+                    return;
+                }
+                
+                const
+                    url_obj = new URL( data.url ),
+                    [ api_path, queryId, operationName ] = url_obj.pathname.match( reg_graphql_api ) ?? [ null, null, null ];
+                
+                if ( ! operationName ) {
+                    return;
+                }
+                log_debug( `${operationName} : ${data.url}, data=`, data );
+                
+                if ( ! data.response_object ) {
+                    return;
+                }
+                analyze_graphql_api_result( operationName, data.response_object );
+            } );
             
-            if ( data?.monitor_id != 'twOpenOriginalImage.tweet-capture' ) {
-                return;
-            }
+            let
+                injected_script_infos;
             
-            const
-                url_obj = new URL( data.url ),
-                [ api_path, queryId, operationName ] = url_obj.pathname.match( reg_graphql_api ) ?? [ null, null, null ];
+            injected_script_infos = await window.inject_script_all( [
+                'js/xhr_monitor.js',
+            ] );
+            log_debug( '[js/xhr_monitor.js]', injected_script_infos);
             
-            if ( ! operationName ) {
-                return;
+            injected_script_infos = await window.inject_script_all( [
+                'js/set_xhr_monitor.js',
+            ] );
+            log_debug( '[js/set_xhr_monitor.js]', injected_script_infos);
+        }
+        
+        extension_functions.get_tweet_info = get_tweet_info;
+        
+        for (;;) {
+            if ( typeof window?.tweet_api?.call_graphql_api == 'function' ) {
+                extension_functions.async_get_tweet_info = async_get_tweet_info;
+                break;
             }
-            log_debug( `${operationName} : ${data.url}, data=`, data );
-            
-            if ( ! data.response_object ) {
-                return;
+            if ( window?.tweet_api?.register_error ) {
+                log_error( 'failed to register tweet_api:', window.tweet_api.register_error );
+                break;
             }
-            analyze_graphql_api_result( operationName, data.response_object );
-        } );
-        
-        let
-            injected_script_infos;
-        
-        injected_script_infos = await window.inject_script_all( [
-            'js/xhr_monitor.js',
-        ] );
-        log_debug( '[js/xhr_monitor.js]', injected_script_infos);
-        
-        injected_script_infos = await window.inject_script_all( [
-            'js/set_xhr_monitor.js',
-        ] );
-        log_debug( '[js/set_xhr_monitor.js]', injected_script_infos);
-        
-        Object.assign( extension_functions, {
-            get_tweet_info,
-            async_get_tweet_info,
-        } );
+            log_debug( 'tweet_api.call_graphql_api() is not found => check again later' );
+            await async_wait( 100 );
+        }
     } )();
-    
-    const
-        extension_functions = {
-            open_multi_tabs,
-            request_tab_sorting,
-            get_tweet_info : null,
-            async_get_tweet_info : null,
-        };
     
     return extension_functions;
 } )(); // end of extension_functions
