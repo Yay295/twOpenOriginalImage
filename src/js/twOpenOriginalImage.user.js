@@ -4,7 +4,7 @@
 // @namespace       http://furyu.hatenablog.com/
 // @author          furyu
 // @license         MIT
-// @version         0.1.10
+// @version         0.1.11
 // @include         http://twitter.com/*
 // @include         https://twitter.com/*
 // @include         https://mobile.twitter.com/*
@@ -1303,7 +1303,7 @@ function download_zip( tweet_info_json ) {
             
             if ( fullname && username ) {
                 var media_list = ( result?.media_list || [] ).filter( ( media_info ) => ( media_info.type == 'photo' ) );
-                if ( ( result.quoted_tweet_id ) && ( typeof extension_functions?.get_tweet_info != 'undefined' ) ) {
+                if ( ( result.quoted_tweet_id ) && ( typeof extension_functions != 'undefined' ) && ( typeof extension_functions?.get_tweet_info == 'function' ) ) {
                     const
                         quoted_tweet_info = extension_functions.get_tweet_info( result.quoted_tweet_id );
                     
@@ -1429,7 +1429,7 @@ function download_zip( tweet_info_json ) {
             
         };
     
-    if ( typeof extension_functions?.get_tweet_info == 'function' ) {
+    if ( ( typeof extension_functions != 'undefined' ) && ( typeof extension_functions?.get_tweet_info == 'function' ) ) {
         const
             result = extension_functions.get_tweet_info( tweet_id );
         
@@ -1438,7 +1438,7 @@ function download_zip( tweet_info_json ) {
             return true;
         }
     }
-    if ( typeof extension_functions?.async_get_tweet_info == 'function' ) {
+    if ( ( typeof extension_functions != 'undefined' ) && ( typeof extension_functions?.async_get_tweet_info == 'function' ) ) {
         ( async () => {
             const
                 result = await extension_functions.async_get_tweet_info( tweet_id );
