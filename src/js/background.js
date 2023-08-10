@@ -855,6 +855,40 @@ const
                 }
                 break;
             }
+            case 'FETCH_TEXT_REQUEST' : {
+                log_debug( 'FETCH_TEXT_REQUEST', message );
+                fetch( message.url, message.options )
+                .then( response => {
+                    if ( ! response.ok ) {
+                        sendResponse( {
+                            error : `${response.status} ${response.statusText}`,
+                        } );
+                        return;
+                    }
+                    return response.text();
+                } )
+                .then( ( text ) => {
+                    log_debug( 'FETCH_TEXT_REQUEST => text', text );
+                    sendResponse( {
+                        text : text,
+                    } );
+                } )
+                .catch( ( error ) => {
+                    log_error( 'FETCH_TEXT_REQUEST => error', error );
+                    sendResponse( {
+                        error : error,
+                    } );
+                } );
+                return true;
+            }
+            case 'HEALTH_CHECK_REQUEST' : {
+                log_debug( 'HEALTH_CHECK_REQUEST', message );
+                sendResponse( {
+                    is_ready : true,
+                    tab_id,
+                } );
+                break;
+            }
             default: {
                 log_debug( `Unsupported message: ${type}` );
                 response = {

@@ -1,19 +1,99 @@
 'use strict';
-(async () => {
+(async (chrome) => {
+const
+    USE_BACKGROUND_FETCH = false;
+
 const // 参照: [Firefox のアドオン(content_scripts)でXMLHttpRequestやfetchを使う場合の注意 - 風柳メモ](https://memo.furyutei.com/entry/20180718/1531914142)
     fetch = (typeof content != 'undefined' && typeof content.fetch == 'function') ? content.fetch  : window.fetch;
 
 const
+    async_wait = (wait_msec) => {
+        return new Promise((resolve) => {
+            setTimeout(() => {
+                resolve(wait_msec);
+            }, wait_msec);
+        });
+    },
+    
+    wait_background_ready = (() => {
+        // [メモ] backgroundの処理を(async() => {…})(); に変更(2023/08/07)
+        // →受信準備ができていない場合にエラーになるため、準備できるまで待つ
+        let
+            is_ready = false;
+        
+        return async () => {
+            if (is_ready) {
+                return;
+            }
+            for (;;) {
+                try {
+                    const
+                        response = await chrome.runtime.sendMessage({
+                            type : 'HEALTH_CHECK_REQUEST',
+                        });
+                    if (response?.is_ready) {
+                        console.debug('background is ready', response);
+                        is_ready = true;
+                        break;
+                    }
+                }
+                catch (error) {
+                    console.warn('sendMessage() error', error);
+                }
+                await async_wait(10);
+            }
+        };
+    })(),
+    
+    content_fetch_text = async (url, options) => {
+        try {
+            const
+                response = await fetch(url, options);
+            if (response.error) {
+                throw new Error(response.error);
+            }
+            const
+                response_text = await response.text();
+            return response_text;
+        }
+        catch (error) {
+            throw new Error(error);
+        }
+    },
+    
+    background_fetch_text = async (url, options) => {
+        const
+            response = await chrome.runtime.sendMessage({
+                type : 'FETCH_TEXT_REQUEST',
+                url,
+                options,
+            });
+        if (response.error) {
+            throw new Error(response.error);
+        }
+        return response.text;
+    },
+    
+    fetch_text = USE_BACKGROUND_FETCH ? background_fetch_text : content_fetch_text;
+
+if (USE_BACKGROUND_FETCH) {
+    await wait_background_ready();
+}
+
+const
     tweet_api = {
         call_graphql_api : null,
-    },
-    html = await fetch(location.href).then((response) => {
-        if (! response.ok) {
-            throw new Error(`${response.status} ${response.statusText}`);
-        }
-        return response.text();
-    }).catch((error) => console.error(error));
-if (! html) {
+    };
+
+let
+    html;
+try {
+    html = await fetch_text(location.href, {
+        //mode: 'cors',
+    });
+}
+catch (error) {
+    console.error(error);
     window.tweet_api = Object.assign(tweet_api, {
         register_error: `fetch(${location.href}) error`,
     });
@@ -21,10 +101,11 @@ if (! html) {
 }
 
 const
+    api_url_base = (html.match(new RegExp('"(https://abs\.twimg\.com/[^/]+/client-web/)"')) ?? [])[1],
     api_script_key = (html.match(/"?api"?\s*:\s*"([^"]+)"/) ?? [])[1],
     api_script_suffix = (html.match(/\s*\+\s*"([^".]+\.js)"/) ?? [])[1];
-console.debug(`api_script_key: ${api_script_key}, api_script_suffix: ${api_script_suffix}`);
-if ((! api_script_key) || (! api_script_suffix)) {
+console.debug(`api_url_base: ${api_url_base}, api_script_key: ${api_script_key}, api_script_suffix: ${api_script_suffix}`);
+if ((! api_url_base) || (! api_script_key) || (! api_script_suffix)) {
     // 旧TweetDeck(Cookieのtweetdeck_version=legacy)だと存在しない
     window.tweet_api = Object.assign(tweet_api, {
         register_error: 'api_script_key is not found',
@@ -33,17 +114,18 @@ if ((! api_script_key) || (! api_script_suffix)) {
 }
 
 const
-    api_script = `https://abs.twimg.com/responsive-web/client-web/api.${api_script_key}${api_script_suffix}`;
+    api_script = `${api_url_base}api.${api_script_key}${api_script_suffix}`;
 console.debug(`api_script: ${api_script}`);
 
-const
-    api_js_text = await fetch(api_script).then((response) => {
-        if (! response.ok) {
-            throw new Error(`${response.status} ${response.statusText}`);
-        }
-        return response.text();
-    }).catch((error) => console.error(error));
-if (! api_js_text) {
+let
+    api_js_text;
+try {
+    api_js_text = await fetch_text(api_script, {
+        //mode: 'cors',
+    });
+}
+catch (error) {
+    console.error(error);
     window.tweet_api = Object.assign(tweet_api, {
         register_error: `fetch(${api_script}) error`,
     });
@@ -121,4 +203,4 @@ window.tweet_api = Object.assign(tweet_api, {
     call_graphql_api,
 });
 
-})();
+})(((typeof browser != 'undefined') && browser.runtime) ? browser : chrome);

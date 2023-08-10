@@ -41,7 +41,6 @@ if ( chrome.runtime.lastError ) {
 
 var current_url = location.href;
 
-
 function get_bool( value ) {
     if ( value === undefined ) {
         return null;
@@ -72,13 +71,46 @@ function get_text( value ) {
 } // end of get_text()
 
 const
-    async_wait = ( wait_msec ) => {
-        return new Promise( (resolve, reject) => {
-            setTimeout( () => {
-                resolve( wait_msec );
-            }, wait_msec );
-        } );
-    };
+    async_wait = (wait_msec) => {
+        return new Promise((resolve) => {
+            setTimeout(() => {
+                resolve(wait_msec);
+            }, wait_msec);
+        });
+    },
+    
+    wait_background_ready = (() => {
+        // [メモ] backgroundの処理を(async() => {…})(); に変更(2023/08/07)
+        // →受信準備ができていない場合にエラーになるため、準備できるまで待つ
+        let
+            is_ready = false;
+        
+        return async () => {
+            /*
+            //[TODO] 最初だけのチェックだとなぜかその後のsendMessage()でもエラーが発生する場合があるので常にチェック
+            //if (is_ready) {
+            //    return;
+            //}
+            */
+            for (;;) {
+                try {
+                    const
+                        response = await chrome.runtime.sendMessage({
+                            type : 'HEALTH_CHECK_REQUEST',
+                        });
+                    if (response?.is_ready) {
+                        console.debug('background is ready');
+                        is_ready = true;
+                        break;
+                    }
+                }
+                catch (error) {
+                    console.warn('sendMessage() error', error);
+                }
+                await async_wait(10);
+            }
+        };
+    })();
 
 async function send_content_scripts_info() {
     // content_scripts の情報を渡す
@@ -95,24 +127,19 @@ async function send_content_scripts_info() {
     //    } );
     //} );
     */
-    for ( let ci = 0; ci < 3; ci ++ ) { // [メモ] backgroundの処理を(async() => {…})(); に変更(2023/08/07)→受信準備ができていない場合にエラーになるため、リトライ
-        try {
-            const
-                response = await chrome.runtime.sendMessage( {
-                    type : 'NOTIFICATION_ONLOAD',
-                    info : {
-                        url : location.href,
-                    }
-                } );
-            log_debug( 'send_content_scripts_info(): sendMessage(NOTIFICATION_ONLOAD) response:', response );
-            if ( response ) {
-                break;
-            }
-        }
-        catch ( error ) {
-            log_error( 'send_content_scripts_info(): sendMessage(NOTIFICATION_ONLOAD) error', error );
-        }
-        await async_wait( 100 );
+    await wait_background_ready();
+    try {
+        const
+            response = await chrome.runtime.sendMessage( {
+                type : 'NOTIFICATION_ONLOAD',
+                info : {
+                    url : location.href,
+                }
+            } );
+        log_debug( 'send_content_scripts_info(): sendMessage(NOTIFICATION_ONLOAD) response:', response );
+    }
+    catch ( error ) {
+        log_error( 'send_content_scripts_info(): sendMessage(NOTIFICATION_ONLOAD) error', error );
     }
 } // end of send_content_scripts_info()
 
@@ -148,27 +175,25 @@ function get_init_function( message_type, option_name_to_function_map, namespace
             send_content_scripts_info();
         } ).observe( document.body, { childList : true, subtree : true } );
         
-        for ( let ci = 0; ci < 3; ci++ ) { // [メモ] backgroundの処理を(async() => {…})(); に変更(2023/08/07)→受信準備ができていない場合にエラーになるため、リトライ
-            try {
-                const
-                    // https://developer.chrome.com/extensions/runtime#method-sendMessage
-                    response = await chrome.runtime.sendMessage( {
-                        type : message_type
-                    ,   names : option_names
-                    ,   namespace :  ( namespace ) ? namespace : ''
-                    } );
-                log_debug( `init(): sendMessage(${message_type}) response:`, response );
-                if ( response ) {
-                    const
-                        options = analyze_response( response );
-                        callback( options );
-                    break;
-                }
-            }
-            catch ( error ) {
-                log_error( `init(): sendMessage(${message_type}) error`, error );
-            }
-            await async_wait( 100 );
+        await wait_background_ready();
+        try {
+            const
+                // https://developer.chrome.com/extensions/runtime#method-sendMessage
+                response = await chrome.runtime.sendMessage( {
+                    type : message_type
+                ,   names : option_names
+                ,   namespace :  ( namespace ) ? namespace : ''
+                } );
+            log_debug( `init(): sendMessage(${message_type}) response:`, response );
+            const
+                options = analyze_response( response );
+            callback( options );
+        }
+        catch ( error ) {
+            log_error( `init(): sendMessage(${message_type}) error`, error );
+            const
+                options = analyze_response( null );
+            callback( options );
         }
     }
     return init;
@@ -209,31 +234,29 @@ var extension_functions = ( () => {
     var current_tab_id = -1,
         tab_sorting_is_valid = ( ( default_value ) => {
             ( async () => {
-                for ( let ci = 0; ci < 3; ci++ ) { // [メモ] backgroundの処理を(async() => {…})(); に変更(2023/08/07)→受信準備ができていない場合にエラーになるため、リトライ
-                    try {
+                await wait_background_ready();
+                try {
+                    const
+                        response = await chrome.runtime.sendMessage( {
+                            type : 'GET_OPTIONS',
+                            names : [
+                                'TAB_SORTING',
+                            ],
+                        } );
+                    log_debug( 'sendMessage(GET_OPTIONS.TAB_SORTING) response:', response );
+                    if ( response ) {
+                        // ※オプションは非同期取得となるが、ユーザーがアクションを起こすまでに余裕があるので気にしない
                         const
-                            response = await chrome.runtime.sendMessage( {
-                                type : 'GET_OPTIONS',
-                                names : [
-                                    'TAB_SORTING',
-                                ],
-                            } );
-                        log_debug( 'sendMessage(GET_OPTIONS.TAB_SORTING) response:', response );
-                        if ( response ) {
-                            // ※オプションは非同期取得となるが、ユーザーがアクションを起こすまでに余裕があるので気にしない
-                            var tab_sorting_option_value = get_bool( response[ 'TAB_SORTING' ] );
-                            
-                            if ( tab_sorting_option_value !== null ) {
-                                tab_sorting_is_valid = tab_sorting_option_value;
-                            }
-                            current_tab_id = response.tab_id;
-                            break;
+                            tab_sorting_option_value = get_bool( response[ 'TAB_SORTING' ] );
+                        
+                        if ( tab_sorting_option_value !== null ) {
+                            tab_sorting_is_valid = tab_sorting_option_value;
                         }
+                        current_tab_id = response.tab_id;
                     }
-                    catch ( error ) {
-                        log_debug( 'sendMessage(GET_OPTIONS.TAB_SORTING) error:', error );
-                    }
-                    await async_wait( 100 );
+                }
+                catch ( error ) {
+                    log_debug( 'sendMessage(GET_OPTIONS.TAB_SORTING) error:', error );
                 }
             } )();
             return default_value;
@@ -267,26 +290,21 @@ var extension_functions = ( () => {
                 sort_index = reg_result[ 5 ];
             
             ( async () => {
-                for ( let ci = 0; ci < 3; ci++ ) {
-                    try {
-                        const
-                            response = await chrome.runtime.sendMessage( {
-                                type : 'TAB_SORT_REQUEST',
-                                requested_tab_id,
-                                request_id,
-                                total,
-                                sort_index,
-                                ctrl_key_pushed,
-                            } );
-                        log_debug( 'request_tab_sorting(): sendMessage(TAB_SORT_REQUEST) response:', response );
-                        if ( response ) {
-                            break;
-                        }
-                    }
-                    catch ( error ) {
-                        log_error( 'request_tab_sorting(): sendMessage(TAB_SORT_REQUEST) error:', error );
-                    }
-                    await async_wait( 100 );
+                await wait_background_ready();
+                try {
+                    const
+                        response = await chrome.runtime.sendMessage( {
+                            type : 'TAB_SORT_REQUEST',
+                            requested_tab_id,
+                            request_id,
+                            total,
+                            sort_index,
+                            ctrl_key_pushed,
+                        } );
+                    log_debug( 'request_tab_sorting(): sendMessage(TAB_SORT_REQUEST) response:', response );
+                }
+                catch ( error ) {
+                    log_error( 'request_tab_sorting(): sendMessage(TAB_SORT_REQUEST) error:', error );
                 }
             } )();
             
@@ -401,9 +419,15 @@ var extension_functions = ( () => {
                 switch ( entryType ) {
                     case 'TimelineTimelineItem' : {
                         const
+                            item_type = entry?.content?.itemContent?.itemType;
+                        if ( item_type != 'TimelineTweet' ) {
+                            log_debug( `item_type: ${item_type} => ignored`, entry );
+                            break;
+                        }
+                        const
                             tweet_result = entry?.content?.itemContent?.tweet_results?.result;
                         if ( ! tweet_result ) {
-                            log_warn( 'TimelineTimelineItem: tweet_result not found', entry );
+                            log_warn( `TimelineTimelineItem: tweet_result not found(item_type=${item_type})`, entry );
                             break;
                         }
                         append_tweet_info( tweet_result );
@@ -412,9 +436,15 @@ var extension_functions = ( () => {
                     case 'TimelineTimelineModule' : {
                         ( entry?.content?.items || [] ).map( ( content_item ) => {
                             const
+                                item_type = content_item?.item?.itemContent?.itemType;
+                            if ( item_type != 'TimelineTweet' ) {
+                                log_debug( `item_type: ${item_type} => ignored`, entry );
+                                return;
+                            }
+                            const
                                 tweet_result = content_item?.item?.itemContent?.tweet_results?.result;
                             if ( ! tweet_result ) {
-                                log_warn( 'TimelineTimelineModule: tweet_result not found', entry );
+                                log_warn( `TimelineTimelineModule: tweet_result not found(item_type=${item_type})`, content_item, entry );
                                 return;
                             }
                             append_tweet_info( tweet_result );
@@ -577,6 +607,7 @@ var extension_functions = ( () => {
         
         extension_functions.get_tweet_info = get_tweet_info;
         
+        // tweet_api.jsでtweet_api.call_graphql_api()が登録されるのを待つ
         for (;;) {
             if ( typeof window?.tweet_api?.call_graphql_api == 'function' ) {
                 extension_functions.async_get_tweet_info = async_get_tweet_info;

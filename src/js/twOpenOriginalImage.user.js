@@ -4,7 +4,7 @@
 // @namespace       http://furyu.hatenablog.com/
 // @author          furyu
 // @license         MIT
-// @version         0.1.12
+// @version         0.1.13
 // @include         http://twitter.com/*
 // @include         https://twitter.com/*
 // @include         https://mobile.twitter.com/*
@@ -197,7 +197,15 @@ var DEBUG = false,
         return lang;
     } )(),
     
-    FONT_FAMILY = 'Arial, "ヒラギノ角ゴ Pro W3", "Hiragino Kaku Gothic Pro", Osaka, メイリオ, Meiryo, "ＭＳ Ｐゴシック", "MS PGothic", sans-serif';
+    FONT_FAMILY = 'Arial, "ヒラギノ角ゴ Pro W3", "Hiragino Kaku Gothic Pro", Osaka, メイリオ, Meiryo, "ＭＳ Ｐゴシック", "MS PGothic", sans-serif',
+    
+    LOADING_SVG = `
+        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <path d="M94,50 a44,44,0,1,1,-44,-44" stroke="currentColor" fill="none" stroke-width="12">
+                <animateTransform attributeName="transform" type="rotate" dur="1s" from="0,50,50" to="360,50,50" repeatCount="indefinite" />
+            </path>
+        </svg>
+    `;
 
 switch ( LANGUAGE ) {
     case 'ja' :
@@ -765,7 +773,7 @@ function get_img_url( img_url, kind, old_format ) {
             }
         }
         img_url = img_url.replace( /:\w*$/, '' ) + kind;
-        img_url = img_url.replace( /\.webp:orig$/, '.jpg:orig' ); // [2023-08-06] format=webpにはname=origが存在しないため、ひとまずformat=jpgに置換
+        //img_url = img_url.replace( /\.webp:orig$/, '.jpg:orig' ); // [2023-08-06] format=webpにはname=origが存在しないため、ひとまずformat=jpgに置換
     }
     else {
         if ( ! kind ) {
@@ -777,7 +785,7 @@ function get_img_url( img_url, kind, old_format ) {
         }
         
         img_url = img_url.replace( /\.([^.]+):\w*$/, '' ) + '?format=' + RegExp.$1 + '&name=' + kind;
-        img_url = img_url.replace( /format=webp&name=orig$/, 'format=jpg&name=orig' ); // [2023-08-06] format=webpにはname=origが存在しないため、ひとまずformat=jpgに置換
+        //img_url = img_url.replace( /format=webp&name=orig$/, 'format=jpg&name=orig' ); // [2023-08-06] format=webpにはname=origが存在しないため、ひとまずformat=jpgに置換
     }
     
     return img_url;
@@ -985,10 +993,15 @@ const
             if ( ! source_img_url ) {
                 return source_img_url;
             }
-            const
+            let
                 current_extension = get_img_extension( source_img_url, extension_list );
             if ( ! current_extension ) {
                 return source_img_url;
+            }
+            if ( current_extension == 'webp' ) {
+                // format=webpにはname=origが存在しないため、ひとまずformat=jpgに置換
+                current_extension = 'jpg';
+                source_img_url = source_img_url.replace( 'format=webp', `format=${current_extension}` );
             }
             const
                 valid_img_url = img_url_replace_map[ source_img_url ];
@@ -1956,6 +1969,28 @@ function initialize( user_options ) {
                 button.textContent = escape_html( OPTIONS.BUTTON_TEXT );
                 button_container_template.className = 'ProfileTweet-action ' + button_container_classname + ' js-tooltip';
                 button_container_template.appendChild( button );
+                
+                button_style.position = 'relative';
+                
+                const
+                    loading_container = d.createElement( 'div' ),
+                    loading_container_style = loading_container.style,
+                    svg_doc = new DOMParser().parseFromString( LOADING_SVG, 'application/xml' );
+                
+                loading_container.classList.add( 'loading' );
+                
+                loading_container_style.display = 'none';
+                loading_container_style.position = 'absolute';
+                loading_container_style.top = '0';
+                loading_container_style.right = '0';
+                loading_container_style.width = '24px';
+                loading_container_style.color = 'rgb(29, 155, 240)';
+                
+                loading_container.appendChild(
+                    loading_container.ownerDocument.importNode( svg_doc.documentElement, true )
+                );
+                
+                button.appendChild( loading_container );
                 
                 return button_container_template;
             } )(),
@@ -3880,30 +3915,36 @@ function initialize( user_options ) {
             add_event( button, 'click', function ( event ) {
                 event.stopPropagation();
                 
-                var focused_img_url = button.getAttribute( 'data-target-img-url' ),
+                const
+                    button_loading_container_style = button.querySelector( '.loading' ).style,
                     alt_key_pushed = event.altKey || ( button.getAttribute( 'data-event-alt-key' ) == 'yes' ),
                     ctrl_key_pushed = event.ctrlKey || ( button.getAttribute( 'data-event-ctrl-key' ) == 'yes' ),
-                    shift_key_pushed = event.shiftKey || ( button.getAttribute( 'data-event-shift-key' ) == 'yes' ),
+                    shift_key_pushed = event.shiftKey || ( button.getAttribute( 'data-event-shift-key' ) == 'yes' );
+                
+                let
+                    focused_img_url = button.getAttribute( 'data-target-img-url' ),
                     target_img_urls = img_urls.slice( 0 ),
                     target_all_img_urls = all_img_urls.slice( 0 );
+                
+                button_loading_container_style.display = 'block';
                 
                 button.removeAttribute( 'data-target-img-url' );
                 button.removeAttribute( 'data-event-alt-key' );
                 button.removeAttribute( 'data-event-ctrl-key' );
                 button.removeAttribute( 'data-event-shift-key' );
                 
-                ( async () => {
-                    if ( focused_img_url ) {
-                        focused_img_url = await find_valid_img_url( focused_img_url );
-                    }
-                    for ( let ci = 0; ci < target_img_urls.length; ci ++ ) {
-                        target_img_urls[ ci ] = await find_valid_img_url( target_img_urls[ ci ] );
-                    }
-                    for ( let ci = 0; ci < target_all_img_urls.length; ci ++ ) {
-                        target_all_img_urls[ ci ] = await find_valid_img_url( target_all_img_urls[ ci ] );
-                    }
-                    
-                    if ( OPTIONS.DISPLAY_ALL_IN_ONE_PAGE ^ alt_key_pushed ) {
+                if ( OPTIONS.DISPLAY_ALL_IN_ONE_PAGE ^ alt_key_pushed ) {
+                    ( async () => {
+                        if ( focused_img_url ) {
+                            focused_img_url = await find_valid_img_url( focused_img_url );
+                        }
+                        for ( let ci = 0; ci < target_img_urls.length; ci ++ ) {
+                            target_img_urls[ ci ] = await find_valid_img_url( target_img_urls[ ci ] );
+                        }
+                        for ( let ci = 0; ci < target_all_img_urls.length; ci ++ ) {
+                            target_all_img_urls[ ci ] = await find_valid_img_url( target_all_img_urls[ ci ] );
+                        }
+                        
                         var tweet_link,
                             tweet_url,
                             tweet_text,
@@ -3932,6 +3973,8 @@ function initialize( user_options ) {
                         //title = ( tweet_text ) ? ( ( tweet_text.innerText !== undefined ) ? tweet_text.innerText : tweet_text.textContent ) : '';
                         title = ( tweet_text ) ? get_text_from_element( tweet_text ).trim() : '';
                         
+                        button_loading_container_style.display = 'none';
+                        
                         if ( OPTIONS.DISPLAY_OVERLAY || ( is_firefox() && is_extension() ) ) {
                             // TODO: Firefox 68.0.1 では about:blank の document が「DOMException: "Permission denied to access property "document" on cross-origin object"」となってアクセス不可のため、常にオーバーレイ表示
                             show_overlay( target_img_urls, tweet_url, title, focused_img_url, tweet, target_all_img_urls );
@@ -3939,28 +3982,37 @@ function initialize( user_options ) {
                         else {
                             open_page( ( focused_img_url ) ? [ focused_img_url ] : target_img_urls, tweet_url, title );
                         }
+                    } )();
+                }
+                else {
+                    // [覚書] find_valid_img_url()してから画像を開くとボタンを押してから開くまでに顕著なタイムラグが出てしまう
+                    // →ひとまずformat=webpだけはname=4096x4096で開いておき、開いた先でname=origにリダイレクト
+                    if ( focused_img_url ) {
+                        target_img_urls = [ focused_img_url ];
+                    }
+                    target_img_urls = target_img_urls.map( ( target_img_url ) => {
+                        if ( get_img_extension( target_img_url ) == 'webp' ) {
+                            target_img_url = target_img_url.replace( /name=orig/, 'name=4096x4096' ); // webpでもname=4096x4096ならば404にならずに開ける模様
+                        }
+                        return target_img_url;
+                    } );
+                    
+                    var window_name = '_blank';
+                    
+                    // TODO: 順に開くと最後の画像タブがアクティブになってしまう
+                    if ( typeof extension_functions != 'undefined' ) {
+                        // 拡張機能の場合には chrome.tabs により制御
+                        extension_functions.open_multi_tabs( target_img_urls, ctrl_key_pushed );
                     }
                     else {
-                        if ( focused_img_url ) {
-                            target_img_urls = [ focused_img_url ];
-                        }
-                        
-                        var window_name = '_blank';
-                        
-                        // TODO: 順に開くと最後の画像タブがアクティブになってしまう
-                        if ( typeof extension_functions != 'undefined' ) {
-                            // 拡張機能の場合には chrome.tabs により制御
-                            extension_functions.open_multi_tabs( target_img_urls, ctrl_key_pushed );
-                        }
-                        else {
-                            // 逆順にして、最初の画像がアクティブになるようにする
-                            target_img_urls.reverse();
-                            target_img_urls.forEach( function ( img_url, index ) {
-                                w.open( img_url, '_blank' );
-                            } );
-                        }
+                        // 逆順にして、最初の画像がアクティブになるようにする
+                        target_img_urls.reverse();
+                        target_img_urls.forEach( function ( img_url, index ) {
+                            w.open( img_url, '_blank' );
+                        } );
                     }
-                } )();
+                    button_loading_container_style.display = 'none';
+                }
                 return false;
             } );
             
