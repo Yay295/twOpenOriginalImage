@@ -4,7 +4,7 @@
 // @namespace       http://furyu.hatenablog.com/
 // @author          furyu
 // @license         MIT
-// @version         0.1.13
+// @version         0.1.14
 // @include         http://twitter.com/*
 // @include         https://twitter.com/*
 // @include         https://mobile.twitter.com/*
@@ -121,7 +121,6 @@ if ( /^https:\/\/twitter\.com\/i\/cards/.test( w.location.href ) ) {
     return;
 }
 
-
 // ■ パラメータ
 var OPTIONS = {
     SHOW_IN_DETAIL_PAGE : true // true: 詳細ページで動作
@@ -170,9 +169,30 @@ var DEBUG = false,
     is_twitter = make_is_url_function( /^https?:\/\/(?:mobile\.)?twitter\.com\// ),
     is_tweetdeck = make_is_url_function( /^https?:\/\/tweetdeck\.twitter\.com\// ),
     is_media_url = make_is_url_function( /^https?:\/\/pbs\.twimg\.com\/media\// ),
+    is_react_page = ( () => {
+        const
+            is_react_page = !! d.querySelector( 'div#react-root' );
+        return () => is_react_page;
+    } )(),
     is_react_twitter = ( () => {
-        var is_react = is_twitter() && ( !! d.querySelector( 'div#react-root' ) );
-        return () => is_react;
+        const
+            is_react_twitter = is_react_page() && is_twitter();
+        return () => is_react_twitter;
+    } )(),
+    is_react_tweetdeck = ( () => {
+        const
+            is_react_tweetdeck = is_react_page() && is_tweetdeck();
+        return () => is_react_tweetdeck;
+    } )(),
+    is_legacy_twitter = ( () => {
+        const
+            is_legacy_twitter = ( ! is_react_page() ) && is_twitter();
+        return () => is_legacy_twitter;
+    } )(),
+    is_legacy_tweetdeck = ( () => {
+        const
+            is_legacy_tweetdeck = ( ! is_react_page() ) && is_tweetdeck();
+        return () => is_legacy_tweetdeck;
     } )(),
     
     LANGUAGE = ( function () {
@@ -206,6 +226,9 @@ var DEBUG = false,
             </path>
         </svg>
     `;
+
+const // 参照: [Firefox のアドオン(content_scripts)でXMLHttpRequestやfetchを使う場合の注意 - 風柳メモ](https://memo.furyutei.com/entry/20180718/1531914142)
+    fetch = (typeof content != 'undefined' && typeof content.fetch == 'function') ? content.fetch  : window.fetch;
 
 switch ( LANGUAGE ) {
     case 'ja' :
@@ -287,6 +310,13 @@ function log_info() {
     
     console.info.apply( console, arg_list.concat( to_array( arguments ) ) );
 } // end of log_info()
+
+
+function log_warn() {
+    var arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+    
+    console.warn.apply( console, arg_list.concat( [ ... arguments ] ) );
+} // end of log_warn()
 
 
 function log_error() {
@@ -410,7 +440,7 @@ var is_extension = ( function () {
 var body_computed_style = getComputedStyle( d.body );
 
 function is_night_mode() {
-    if ( is_react_twitter() ) {
+    if ( is_react_page() ) {
         // 新 Twitter 用判定
         /*
         //var header_elem = d.querySelector( 'header[role="banner"]' );
@@ -563,6 +593,24 @@ var escape_html = ( function () {
     
     return escape_html;
 } )(); // end of escape_html()
+
+
+const
+    parse_cookies = ( cookie_string ) => {
+        if ( ! cookie_string ) {
+            cookie_string = document.cookie;
+        }
+        const
+            cookie_map = cookie_string.split( ';' )
+            .map( ( part_string ) => part_string.split( '=' ) )
+            .reduce( ( cookie_map, [ name, value ] ) => {
+                cookie_map[ decodeURIComponent( name.trim() ) ] = decodeURIComponent( value.trim() );
+                return cookie_map;
+            }, Object.create( null ) );
+        return cookie_map;
+    },
+    
+    get_cookie = ( name ) => parse_cookies()[ name ];
 
 
 function get_scroll_top( doc ) {
@@ -881,14 +929,18 @@ function is_tweet_detail_on_react_twitter( tweet ) {
         tweet_link = timestamp_container ? search_ancestor_by_attribute( timestamp_container, 'role', 'link' ) : null,
         tweet_id = get_tweet_id_from_tweet_url( tweet_link?.href ?? '' );
     log_debug( ( location_tweet_id == tweet_id ), `location_tweet_id=${location_tweet_id} vs tweet_id=${tweet_id}` );
-    return ( location_tweet_id == tweet_id );
+    return ( ( location_tweet_id ) && ( tweet_id ) && ( location_tweet_id == tweet_id ) );
     // [2023.08] a[role="link"][href*="/help.twitter.com/"]が存在しなくなっている／自身へのリンクは存在
 } // end of is_tweet_detail_on_react_twitter()
 
 
 function get_tweet_link_on_react_twitter( tweet ) {
     var tweet_link,
-        timestamp_container = tweet.querySelector( 'a[role="link"][href^="/"][href*="/status/"] time:last-of-type' );
+        timestamp_container = tweet.querySelector( [
+            'a[role="link"][href^="/"][href*="/status/"] time:last-of-type',
+            'a[role="link"][href^="https://twitter.com/"][href*="/status/"] time:last-of-type',
+            'a[role="link"][href^="https://mobile.twitter.com/"][href*="/status/"] time:last-of-type',
+        ].join( ',' ) );
     
     if ( timestamp_container ) {
         tweet_link = search_ancestor_by_attribute( timestamp_container, 'role', 'link' );
@@ -936,30 +988,148 @@ function get_text_from_element( element ) {
 } // end of get_text_from_element()
 
 
-function fetch_status( tweet_id ) {
-    const
-        //auth_bearer = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
-        auth_bearer = 'AAAAAAAAAAAAAAAAAAAAAF7aAAAAAAAASCiRjWvh7R5wxaKkFp7MM%2BhYBqM%3DbQ0JPmjU9F6ZoMhDfI4uTNAaQuTDm2uO9x3WFVr2xBZ2nhjdP0';
-    return fetch(
-        ( is_react_twitter() ? 'https://twitter.com/i/api' : 'https://api.twitter.com' ) + '/1.1/statuses/show.json?include_my_retweet=true&include_entities=true&trim_user=false&include_ext_alt_text=true&include_card_uri=true&tweet_mode=extended&id=' + encodeURIComponent( tweet_id ), {
-        method: 'GET',
-        headers: {
-            'authorization' : `Bearer ${auth_bearer}`,
-            'x-csrf-token' : document.cookie.match( /ct0=(.*?)(?:;|$)/ )[ 1 ],
-            'x-twitter-active-user' : 'yes',
-            'x-twitter-auth-type' : 'OAuth2Session',
-            'x-twitter-client-language' : 'en',
-        },
-        mode: 'cors',
-        credentials : 'include',
-    } )
-    .then( response => {
-        if ( ! response.ok ) {
-            throw new Error( 'Network response was not ok' );
-        }
-        return response.json()
-    } );
-} // end of fetch_status()
+/*
+//function fetch_status( tweet_id ) {
+//    const
+//        //auth_bearer = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
+//        auth_bearer = 'AAAAAAAAAAAAAAAAAAAAAF7aAAAAAAAASCiRjWvh7R5wxaKkFp7MM%2BhYBqM%3DbQ0JPmjU9F6ZoMhDfI4uTNAaQuTDm2uO9x3WFVr2xBZ2nhjdP0';
+//    return fetch(
+//        ( is_react_twitter() ? 'https://twitter.com/i/api' : 'https://api.twitter.com' ) + '/1.1/statuses/show.json?include_my_retweet=true&include_entities=true&trim_user=false&include_ext_alt_text=true&include_card_uri=true&tweet_mode=extended&id=' + encodeURIComponent( tweet_id ), {
+//        method: 'GET',
+//        headers: {
+//            'authorization' : `Bearer ${auth_bearer}`,
+//            'x-csrf-token' : document.cookie.match( /ct0=(.*?)(?:;|$)/ )[ 1 ],
+//            'x-twitter-active-user' : 'yes',
+//            'x-twitter-auth-type' : 'OAuth2Session',
+//            'x-twitter-client-language' : 'en',
+//        },
+//        mode: 'cors',
+//        credentials : 'include',
+//    } )
+//    .then( response => {
+//        if ( ! response.ok ) {
+//            throw new Error( 'Network response was not ok' );
+//        }
+//        return response.json()
+//    } );
+//} // end of fetch_status()
+*/
+
+
+const
+    fetch_status_json = ( () => {
+        const
+            //auth_bearer = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA', // Twitter(API 1.1)
+            auth_bearer = 'AAAAAAAAAAAAAAAAAAAAAF7aAAAAAAAASCiRjWvh7R5wxaKkFp7MM%2BhYBqM%3DbQ0JPmjU9F6ZoMhDfI4uTNAaQuTDm2uO9x3WFVr2xBZ2nhjdP0', // TweetDeck(legacy)
+            
+            chrome = ( ( typeof browser != 'undefined' ) && browser.runtime ) ? browser : window.chrome,
+            
+            async_wait = (wait_msec) => {
+                return new Promise((resolve) => {
+                    setTimeout(() => {
+                        resolve(wait_msec);
+                    }, wait_msec);
+                });
+            },
+            
+            wait_background_ready = (() => {
+                // [メモ] backgroundの処理を(async() => {…})(); に変更(2023/08/07)
+                // →受信準備ができていない場合にエラーになるため、準備できるまで待つ
+                const
+                    wait_msec = 10;
+                let
+                    is_ready = false;
+                
+                return async () => {
+                    /*
+                    //[TODO] 最初だけのチェックだとなぜかその後のsendMessage()でもエラーが発生する場合がある模様
+                    //→暫定的に、常にチェック
+                    //if (is_ready) {
+                    //    return;
+                    //}
+                    */
+                    for (;;) {
+                        try {
+                            const
+                                response = await chrome.runtime.sendMessage({
+                                    type : 'HEALTH_CHECK_REQUEST',
+                                });
+                            if (response?.is_ready) {
+                                log_debug('background is ready', response);
+                                is_ready = true;
+                                break;
+                            }
+                        }
+                        catch (error) {
+                            log_warn('sendMessage() error', error);
+                        }
+                        log_debug(`background is not ready => retry after ${wait_msec} msec`);
+                        await async_wait(wait_msec);
+                    }
+                };
+            })(),
+            
+            content_fetch_json = async (url, options) => {
+                try {
+                    const
+                        response = await fetch(url, options);
+                    if (! response.ok) {
+                        throw new Error(`${response.status} ${response.statusText}`);
+                    }
+                    if (response.error) {
+                        throw new Error(response.error);
+                    }
+                    const
+                        response_object = await response.json();
+                    return response_object;
+                }
+                catch (error) {
+                    throw new Error(error);
+                }
+            },
+            
+            background_fetch_json = async (url, options) => {
+                await wait_background_ready();
+                const
+                    response = await chrome.runtime.sendMessage({
+                        type : 'FETCH_JSON_REQUEST',
+                        url,
+                        options,
+                    });
+                if (response.error) {
+                    throw new Error(response.error);
+                }
+                return response.response_object;
+            },
+            
+            fetch_json = is_extension() ? background_fetch_json : content_fetch_json;
+            
+        return async ( tweet_id ) => {
+            const
+                url = `${is_react_page() ? 'https://twitter.com/i/api' : 'https://api.twitter.com'}/1.1/statuses/show.json?include_my_retweet=true&include_entities=true&trim_user=false&include_ext_alt_text=true&include_card_uri=true&tweet_mode=extended&id=${encodeURIComponent( tweet_id )}`,
+                options = {
+                    method: 'GET',
+                    headers: {
+                        'authorization' : `Bearer ${auth_bearer}`,
+                        'x-csrf-token' : get_cookie( 'ct0' ),
+                        'x-twitter-active-user' : 'yes',
+                        'x-twitter-auth-type' : 'OAuth2Session',
+                        'x-twitter-client-language' : 'en',
+                    },
+                    mode: 'cors',
+                    credentials : 'include',
+                };
+            
+            try {
+                const
+                    response_object = await fetch_json( url, options );
+                return response_object;
+            }
+            catch ( error ) {
+                throw new Error( error );
+            }
+        };
+    } )();
 
 
 const
@@ -1215,7 +1385,7 @@ function save_blob( filename, blob ) {
         download_button.parentNode.removeChild( download_button );
     } // end of _save()
     
-    if ( ( typeof saveAs == 'function' ) && ( ! is_tweetdeck() ) ) {
+    if ( ( typeof saveAs == 'function' ) && ( ! is_legacy_tweetdeck() ) ) {
         try {
             //window.saveAs( blob, filename ); // Firefoxでは saveAs は window 下に存在しない
             saveAs( blob, filename );
@@ -1313,7 +1483,7 @@ function download_zip( tweet_info_json ) {
                     datetime_string = get_datetime_string_from_timestamp_ms( new Date( result.created_at ).getTime() );
                 }
                 catch ( error ) {
-                    log_error( 'download_zip() fetch_status() callback() error:', error );
+                    log_error( 'download_zip() callback() error:', error );
                 }
             }
             
@@ -1330,16 +1500,16 @@ function download_zip( tweet_info_json ) {
                             text_list = [ media_info.media_url_https ],
                             media_alt_text = media_info.ext_alt_text;
                         if ( media_alt_text ) {
-                            text_list.push( `[Alt]\n${media_alt_text}` );
+                            text_list.push( `[Alt]\n${media_alt_text}\n` );
                         }
                         return text_list.join( '\n' );
                     } ).join( '\n' ),
                     tweet_info_text = [
                         tweet_url,
-                        fullname + '\n@' + username + '\n' + datetime_string,
-                        title + ( result?.quoted_tweet_url ? '\n\n' + result.quoted_tweet_url : '' ),
+                        `${fullname}\n@${username}\n${datetime_string}`,
+                        title + ( result?.quoted_tweet_url ? `\n\n${result.quoted_tweet_url}` : '' ),
                         media_text,
-                    ].join( '\n\n' ) + '\n';
+                    ].join( `\n${'-'.repeat(80)}\n` ) + '\n';
                 
                 zip.file( filename_prefix + '.txt', tweet_info_text, {
                     date : zipdate
@@ -1461,26 +1631,51 @@ function download_zip( tweet_info_json ) {
                 //    error_message,
                 //}, true );
                 */
-                fetch_status( tweet_id )
-                .then( result => {
+                /*
+                //fetch_status( tweet_id )
+                //.then( result => {
+                //    callback( result, false );
+                //} )
+                //.catch( error => {
+                //    log_error( 'download_zip() fetch_status() error:', error );
+                //    callback( error, true );
+                //} );
+                */
+                log_warn( 'download_zip() extension_functions.async_get_tweet_info() failure' );
+                try {
+                    const
+                        result = await fetch_status_json( tweet_id );
                     callback( result, false );
-                } )
-                .catch( error => {
-                    log_error( 'download_zip() fetch_status() error:', error );
+                }
+                catch ( error ) {
+                    log_error( 'download_zip() fetch_status_json() error:', error );
                     callback( error, true );
-                } );
+                }
             }
         } )();
     }
     else {
-        fetch_status( tweet_id )
-        .then( result => {
-            callback( result, false );
-        } )
-        .catch( error => {
-            log_error( 'download_zip() fetch_status() error:', error );
-            callback( error, true );
-        } );
+        /*
+        //fetch_status( tweet_id )
+        //.then( result => {
+        //    callback( result, false );
+        //} )
+        //.catch( error => {
+        //    log_error( 'download_zip() fetch_status() error:', error );
+        //    callback( error, true );
+        //} );
+        */
+        ( async () => {
+            try {
+                const
+                    result = await fetch_status_json( tweet_id );
+                callback( result, false );
+            }
+            catch ( error ) {
+                log_error( 'download_zip() fetch_status_json() error:', error );
+                callback( error, true );
+            }
+        } )();
     }
     return true;
 } // end of download_zip()
@@ -1971,7 +2166,7 @@ function initialize( user_options ) {
                 
                 button_container_template.setAttribute( 'data-original-title', button_title );
                 
-                if ( is_tweetdeck() ) {
+                if ( is_legacy_tweetdeck() ) {
                     button.title = button_title;
                 }
                 
@@ -2947,7 +3142,7 @@ function initialize( user_options ) {
                 timestamp_container,
                 timestamp_ms;
             
-            if ( is_react_twitter() ) {
+            if ( is_react_page() ) {
                 //fullname_container = tweet.querySelector( 'a[role="link"] [dir="auto"] > span > span[dir="auto"]' );
                 fullname_container = tweet.querySelector( 'a[role="link"] [dir="auto"] > span' );
                 //fullname = ( fullname_container ) ? fullname_container.textContent.trim() : '';
@@ -3062,7 +3257,7 @@ function initialize( user_options ) {
                 image_overlay_loading_style.display = 'none';
                 image_overlay_container_style.display = 'none';
                 
-                if ( is_tweetdeck() ) {
+                if ( is_legacy_tweetdeck() ) {
                     body_style.marginRight = saved_body_marginRight;
                     body_style.overflowX = saved_body_overflowX;
                     body_style.overflowY = saved_body_overflowY;
@@ -3564,7 +3759,7 @@ function initialize( user_options ) {
             event_list.push( { element : image_overlay_container, name : 'toggle-image-background-color', func : toggle_image_background_color } );
             add_events();
             
-            if ( is_tweetdeck() ) {
+            if ( is_legacy_tweetdeck() ) {
                 html_style.overflowX = 'hidden';
                 html_style.overflowY = 'hidden';
                 body_style.overflowX = 'hidden';
@@ -3712,7 +3907,7 @@ function initialize( user_options ) {
                 
                 try {
                     number = parseInt( search_ancestor_by_attribute( img_object, 'href' ).href.replace( /^.*\/photo\//, '' ), 10 );
-                    if ( is_react_twitter() ) {
+                    if ( is_react_page() ) {
                         //offset = ( search_ancestor_by_attribute( img_object, 'role', 'blockquote' ) ) ? 10 : 0;
                         offset = img_object.closest( 'div[role="link"], [role="blockquote"]' ) ? 10 : 0;
                     }
@@ -3730,7 +3925,7 @@ function initialize( user_options ) {
             function get_img_objects( container ) {
                 var img_objects = [];
                 
-                if ( is_react_twitter() ) {
+                if ( is_react_page() ) {
                     img_objects = to_array( container.querySelectorAll( 'div[aria-label] > img[src*="//pbs.twimg.com/media/"]' ) ).filter( ( img_object ) => {
                         if ( OPTIONS.SHOW_IMAGES_OF_QUOTE_TWEET ) {
                             return true;
@@ -3814,17 +4009,17 @@ function initialize( user_options ) {
             } // end of get_img_urls()
             
             
-            tweet_container = ( is_tweetdeck() ) ? search_ancestor( tweet, [ 'js-stream-item' ] ) : null;
+            tweet_container = ( is_legacy_tweetdeck() ) ? search_ancestor( tweet, [ 'js-stream-item' ] ) : null;
             if ( ! tweet_container ) {
                 tweet_container = tweet;
             }
             
-            if ( is_react_twitter() ) {
+            if ( is_react_page() ) {
                 // TODO: React 版 Twitter の Gallery 表示には未対応
                 //gallery = d.querySelector( '[aria-labelledby="modal-header"]' );
             }
             else {
-                gallery = ( is_tweetdeck() && tweet_container.classList.contains( 'js-stream-item' ) ) ? null : search_ancestor( tweet, [ 'Gallery', 'js-modal-panel' ] );
+                gallery = ( is_legacy_tweetdeck() && tweet_container.classList.contains( 'js-stream-item' ) ) ? null : search_ancestor( tweet, [ 'Gallery', 'js-modal-panel' ] );
             }
             
             if ( gallery ) {
@@ -3835,12 +4030,12 @@ function initialize( user_options ) {
             
             old_button = tweet_container.querySelector( '.' + button_container_classname );
             
-            if ( ! is_react_twitter() ) {
+            if ( ! is_react_page() ) {
                 remove_old_button( old_button );
             }
             
             var source_container = ( function () {
-                    if ( ( ! is_tweetdeck() ) || ( ! gallery ) ) {
+                    if ( ( ! is_legacy_tweetdeck() ) || ( ! gallery ) ) {
                         return tweet_container;
                     }
                     
@@ -3862,7 +4057,7 @@ function initialize( user_options ) {
                 img_urls = [],
                 all_img_urls = [];
             
-            if ( is_react_twitter() ) {
+            if ( is_react_page() ) {
                 if ( ! action_list ) {
                     if ( is_tweet_detail_on_react_twitter( tweet ) ) {
                         action_list = get_tweet_link_on_react_twitter( tweet );
@@ -3874,7 +4069,12 @@ function initialize( user_options ) {
                         action_list = tweet_container.querySelector( '[role="group"]' );
                         if ( action_list ) {
                             if ( OPTIONS.DISPLAY_ORIGINAL_BUTTONS ) {
-                                action_list.style.maxWidth = 'initial';
+                                if ( is_react_tweetdeck() ) {
+                                    action_list.style.flexWrap = 'wrap';
+                                }
+                                else {
+                                    action_list.style.maxWidth = 'initial';
+                                }
                             }
                         }
                     }
@@ -3900,7 +4100,7 @@ function initialize( user_options ) {
                 all_img_urls = img_urls.slice( 0 );
             }
             
-            if ( is_react_twitter() && old_button ) {
+            if ( is_react_page() && old_button ) {
                 if ( old_button.getAttribute( 'data-image-number' ) == img_objects.length ) {
                     log_debug( 'found old button and same image number', old_button );
                     return null;
@@ -3912,9 +4112,13 @@ function initialize( user_options ) {
             var button_container = button_container_template.cloneNode( true ),
                 button = button_container.querySelector( 'button' );
             
-            if ( is_react_twitter() ) {
+            if ( is_react_page() ) {
                 button_container.setAttribute( 'data-image-number', img_objects.length );
-                button_container.style.cssFloat = 'right';
+                if ( is_react_tweetdeck() ) {
+                }
+                else {
+                    button_container.style.cssFloat = 'right';
+                }
                 button.title = button_container.getAttribute( 'data-original-title' );
             }
             
@@ -3961,7 +4165,7 @@ function initialize( user_options ) {
                             title,
                             article;
                         
-                        if ( is_react_twitter() ) {
+                        if ( is_react_page() ) {
                             tweet_link = get_tweet_link_on_react_twitter( tweet );
                             tweet_url = tweet_link && tweet_link.href;
                             //tweet_text = tweet.querySelector( 'div[lang][dir="auto"] > span' );
@@ -4034,7 +4238,7 @@ function initialize( user_options ) {
                 }
                 button_container.classList.remove( 'removed' );
                 
-                if ( is_tweetdeck() ) {
+                if ( is_legacy_tweetdeck() ) {
                     if ( action_list.tagName == 'FOOTER' ) {
                         if ( search_ancestor( img_objects[ 0 ], [ 'js-tweet', 'tweet' ] ) ) {
                             button.style.marginTop = '0';
@@ -4061,7 +4265,10 @@ function initialize( user_options ) {
                     else {
                         action_list.appendChild( button_container );
                         
-                        if ( is_react_twitter() ) {
+                        if ( is_react_tweetdeck() && action_list.querySelector( '[role="separator"]' ) ) {
+                            button_container.style.marginTop = '4px';
+                        }
+                        else if ( is_react_twitter() ) {
                             var previous_element = button_container.previousSibling;
                             
                             if ( previous_element ) {
@@ -4080,7 +4287,7 @@ function initialize( user_options ) {
             add_event( button_container, 'reinsert', insert_button );
             
             if ( OPTIONS.OVERRIDE_CLICK_EVENT ) {
-                if ( gallery_media && ( ! is_tweetdeck() ) ) {
+                if ( gallery_media && ( ! is_legacy_tweetdeck() ) ) {
                     // TODO: ナビが覆いかぶさっている(z-index:1)ため、手前に出して画像クリックイベントの方を優先化しているが、もっとスマートな方法は無いか？
                     //gallery_media.style.zIndex = 10;
                     //gallery_media.style.pointerEvents = 'none';
@@ -4095,7 +4302,7 @@ function initialize( user_options ) {
                 }
                 
                 to_array( img_objects ).forEach( function ( img ) {
-                    if ( is_tweetdeck() && ( ! OPTIONS.OVERRIDE_GALLERY_FOR_TWEETDECK ) && ( ! gallery_media ) ) {
+                    if ( is_legacy_tweetdeck() && ( ! OPTIONS.OVERRIDE_GALLERY_FOR_TWEETDECK ) && ( ! gallery_media ) ) {
                         return;
                     }
                     
@@ -4159,7 +4366,7 @@ function initialize( user_options ) {
                         add_event( img, 'remove-image-events', remove_image_events );
                     }
                     
-                    if ( img.classList.contains( 'media-image' ) || is_react_twitter() ) {
+                    if ( img.classList.contains( 'media-image' ) || is_react_page() ) {
                         img.style.pointerEvents = 'auto';
                     }
                     
@@ -4195,7 +4402,7 @@ function initialize( user_options ) {
             tweet,
             ancestor;
         
-        if ( is_react_twitter() ) {
+        if ( is_react_page() ) {
             /*
             //if ( ! search_ancestor_by_attribute( node, 'data-testid', 'primaryColumn', true ) ) {
             //    return false;
@@ -4224,8 +4431,10 @@ function initialize( user_options ) {
             //    add_open_button( tweet );
             //} );
             */
-            
-            tweet_list = to_array( node.querySelectorAll( 'div[data-testid="primaryColumn"] article[role="article"]' ) ).filter( ( article ) => {
+            const
+               article_selector = is_react_tweetdeck() ? 'div[data-testid="cellInnerDiv"] article[role="article"]' : 'div[data-testid="primaryColumn"] article[role="article"]';
+               
+            tweet_list = to_array( node.querySelectorAll( article_selector ) ).filter( ( article ) => {
                 if ( ( ( article.getAttribute( 'data-testid' ) == 'tweet' ) || article.querySelector( 'div[data-testid="tweet"]' ) ) && article.querySelector( 'div[aria-label] > img' ) ) {
                     return ( !! add_open_button( article ) );
                 }
@@ -4270,7 +4479,7 @@ function initialize( user_options ) {
             return false;
         }
         
-        if ( is_react_twitter() ) {
+        if ( is_react_page() ) {
             if ( ! /^\/i\/keyboard_shortcuts/.test( new URL( location.href ).pathname ) ) {
                 return false;
             }
@@ -4333,7 +4542,7 @@ function initialize( user_options ) {
                 return false;
             }
             
-            if ( is_tweetdeck() ) {
+            if ( is_legacy_tweetdeck() ) {
                 var keyboard_shortcut_list = help_dialog.querySelector( 'dl.keyboard-shortcut-list' ),
                     dd = d.createElement( 'dd' ),
                     //span = d.createElement( 'span' );
@@ -4391,7 +4600,7 @@ function initialize( user_options ) {
                 stop_observe();
                 
                 try {
-                    if ( is_react_twitter() ) {
+                    if ( is_react_page() ) {
                         check_tweets( d.body );
                         check_help_dialog( d.body );
                     }
@@ -4399,7 +4608,7 @@ function initialize( user_options ) {
                         records.forEach( function ( record ) {
                             var target = record.target;
                                             
-                            if ( is_tweetdeck() ) {
+                            if ( is_legacy_tweetdeck() ) {
                                 to_array( record.removedNodes ).forEach( function ( removedNode ) {
                                     if ( removedNode.nodeType != 1 ) {
                                         return;
@@ -4427,7 +4636,7 @@ function initialize( user_options ) {
                                     return;
                                 }
                                 
-                                if ( is_tweetdeck() ) {
+                                if ( is_legacy_tweetdeck() ) {
                                     if ( addedNode.classList.contains( 'js-media' ) ) {
                                         // TweetDeck でメディア(サムネイル)だけが削除→挿入される場合がある
                                         var ancestor = search_ancestor( addedNode, [ 'js-stream-tweet', 'tweet', 'js-tweet' ] );
@@ -4499,7 +4708,13 @@ function initialize( user_options ) {
             target_tweet,
             button;
         
-        if ( is_react_twitter() ) {
+        if ( is_react_tweetdeck() ) {
+            target_tweet = d.querySelector( 'article[role="article"][data-testid="tweet"][data-focusvisible-polyfill="true"]' );
+            if ( target_tweet ) {
+                button = get_button( target_tweet );
+            }
+        }
+        else if ( is_react_twitter() ) {
             // TODO: React 版 Twitter の Gallery 表示には未対応
             gallery = d.querySelector( '[aria-labelledby="modal-header"]' );
             var region = d.querySelector( 'main[role="main"] [data-testid="primaryColumn"] section[role="region"]' );
@@ -4776,7 +4991,12 @@ function initialize( user_options ) {
                 button_selector + '{padding:2px 6px; font-weight:normal; min-height:16px; white-space:nowrap;}'
             ];
         
-        if ( is_tweetdeck() ) {
+        if ( is_react_tweetdeck() ) {
+            css_rule_lines.push( button_selector + '{margin: 8px 0 8px 0; padding: 0 8px; border: solid 1px #1da1f2; border-radius: 12px; font-size: 11px; color: #1da1f2; background-color: transparent; cursor: pointer;}' );
+            css_rule_lines.push( 'html.dark ' + button_selector + ', #open-modal ' + button_selector + '{background: transparent;}' );
+            css_rule_lines.push( 'html.dark ' + button_selector + ':hover, #open-modal ' + button_selector + ':hover{background: #183142;}' );
+        }
+        else if ( is_legacy_tweetdeck() ) {
             css_rule_lines.push( button_selector + '{margin: 8px 0 8px 0; padding: 0 8px; border-radius: 12px; font-size: 11px;}' );
             css_rule_lines.push( 'html.dark ' + button_selector + ', #open-modal ' + button_selector + '{background: transparent;}' );
             css_rule_lines.push( 'html.dark ' + button_selector + ':hover, #open-modal ' + button_selector + ':hover{background: #183142;}' );
@@ -4785,7 +5005,7 @@ function initialize( user_options ) {
             css_rule_lines.push( button_selector + '{font-size: 12px;}' );
             // TODO: [夜間モード対応] TweetDeck の場合 html.dark で判別がつく一方、Twitter の場合 CSS ファイルそのものを入れ替えている→ CSSルールでの切替困難
             
-            if ( is_react_twitter() ) {
+            if ( is_react_page() ) {
                 css_rule_lines.push( button_selector + '{background-image: linear-gradient(rgb(255, 255, 255), rgb(245, 248, 250)); background-color: rgb(245, 248, 250); color: rgb(102, 117, 127); cursor: pointer; display: inline-block; position: relative; border-width: 1px; border-style: solid; border-color: rgb(230, 236, 240); border-radius: 4px;}' );
                 css_rule_lines.push( button_selector + ':hover {color: rgb(20, 23, 26); background-color: rgb(230, 236, 240); background-image: linear-gradient(rgb(255, 255, 255), rgb(230, 236, 240)); text-decoration: none; border-color: rgb(230, 236, 240);}' );
                 css_rule_lines.push( 'body[data-nightmode="true"] ' + button_selector + '{background-color: #182430; background-image: none; border: 1px solid #38444d; border-radius: 4px; color: #8899a6; display: inline-block;}' );

@@ -1,7 +1,37 @@
 'use strict';
 (async (chrome) => {
 const
-    USE_BACKGROUND_FETCH = false;
+    DEBUG = false,
+    SCRIPT_NAME = 'tweet_api',
+    USE_BACKGROUND_FETCH = true;
+
+const
+    log_debug = function () {
+        if ( ! DEBUG ) {
+            return;
+        }
+        const
+            arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+        console.log.apply( console, arg_list.concat( [ ... arguments ] ) );
+    }, // end of log_debug()
+    
+    log_info = function () {
+        const
+            arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+        console.info.apply( console, arg_list.concat( [ ... arguments ] ) );
+    }, // end of log_info()
+    
+    log_warn = function () {
+        const
+            arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+        console.warn.apply( console, arg_list.concat( [ ... arguments ] ) );
+    }, // end of log_warn()
+    
+    log_error = function () {
+        const
+            arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+        console.error.apply( console, arg_list.concat( [ ... arguments ] ) );
+    }; // end of log_error()
 
 const // 参照: [Firefox のアドオン(content_scripts)でXMLHttpRequestやfetchを使う場合の注意 - 風柳メモ](https://memo.furyutei.com/entry/20180718/1531914142)
     fetch = (typeof content != 'undefined' && typeof content.fetch == 'function') ? content.fetch  : window.fetch;
@@ -18,13 +48,19 @@ const
     wait_background_ready = (() => {
         // [メモ] backgroundの処理を(async() => {…})(); に変更(2023/08/07)
         // →受信準備ができていない場合にエラーになるため、準備できるまで待つ
+        const
+            wait_msec = 10;
         let
             is_ready = false;
         
         return async () => {
-            if (is_ready) {
-                return;
-            }
+            /*
+            //[TODO] 最初だけのチェックだとなぜかその後のsendMessage()でもエラーが発生する場合がある模様
+            //→暫定的に、常にチェック
+            //if (is_ready) {
+            //    return;
+            //}
+            */
             for (;;) {
                 try {
                     const
@@ -32,15 +68,16 @@ const
                             type : 'HEALTH_CHECK_REQUEST',
                         });
                     if (response?.is_ready) {
-                        console.debug('background is ready', response);
+                        log_debug('background is ready', response);
                         is_ready = true;
                         break;
                     }
                 }
                 catch (error) {
-                    console.warn('sendMessage() error', error);
+                    log_warn('sendMessage() error', error);
                 }
-                await async_wait(10);
+                log_debug(`background is not ready => retry after ${wait_msec} msec`);
+                await async_wait(wait_msec);
             }
         };
     })(),
@@ -49,6 +86,9 @@ const
         try {
             const
                 response = await fetch(url, options);
+            if (! response.ok) {
+                throw new Error(`${response.status} ${response.statusText}`);
+            }
             if (response.error) {
                 throw new Error(response.error);
             }
@@ -62,23 +102,65 @@ const
     },
     
     background_fetch_text = async (url, options) => {
-        const
-            response = await chrome.runtime.sendMessage({
-                type : 'FETCH_TEXT_REQUEST',
-                url,
-                options,
-            });
-        if (response.error) {
-            throw new Error(response.error);
+        await wait_background_ready();
+        try {
+            const
+                response = await chrome.runtime.sendMessage({
+                    type : 'FETCH_TEXT_REQUEST',
+                    url,
+                    options,
+                });
+            if (response.error) {
+                throw new Error(response.error);
+            }
+            return response.text;
         }
-        return response.text;
+        catch (error) {
+            throw new Error(error);
+        }
     },
     
-    fetch_text = USE_BACKGROUND_FETCH ? background_fetch_text : content_fetch_text;
-
-if (USE_BACKGROUND_FETCH) {
-    await wait_background_ready();
-}
+    fetch_text = USE_BACKGROUND_FETCH ? background_fetch_text : content_fetch_text,
+    
+    content_fetch_json = async (url, options) => {
+        try {
+            const
+                response = await fetch(url, options);
+            if (! response.ok) {
+                throw new Error(`${response.status} ${response.statusText}`);
+            }
+            if (response.error) {
+                throw new Error(response.error);
+            }
+            const
+                response_object = await response.json();
+            return response_object;
+        }
+        catch (error) {
+            throw new Error(error);
+        }
+    },
+    
+    background_fetch_json = async (url, options) => {
+        await wait_background_ready();
+        try {
+            const
+                response = await chrome.runtime.sendMessage({
+                    type : 'FETCH_JSON_REQUEST',
+                    url,
+                    options,
+                });
+            if (response.error) {
+                throw new Error(response.error);
+            }
+            return response.response_object;
+        }
+        catch ( error ) {
+            throw new Error(error);
+        }
+    },
+    
+    fetch_json = USE_BACKGROUND_FETCH ? background_fetch_json : content_fetch_json;
 
 const
     tweet_api = {
@@ -89,11 +171,13 @@ let
     html;
 try {
     html = await fetch_text(location.href, {
-        //mode: 'cors',
+        mode: 'cors',
+        credentials : 'include',
     });
+    log_debug('html:', html);
 }
 catch (error) {
-    console.error(error);
+    log_error(error);
     window.tweet_api = Object.assign(tweet_api, {
         register_error: `fetch(${location.href}) error`,
     });
@@ -104,7 +188,7 @@ const
     api_url_base = (html.match(new RegExp('"(https://abs\.twimg\.com/[^/]+/client-web/)"')) ?? [])[1],
     api_script_key = (html.match(/"?api"?\s*:\s*"([^"]+)"/) ?? [])[1],
     api_script_suffix = (html.match(/\s*\+\s*"([^".]+\.js)"/) ?? [])[1];
-console.debug(`api_url_base: ${api_url_base}, api_script_key: ${api_script_key}, api_script_suffix: ${api_script_suffix}`);
+log_debug(`api_url_base: ${api_url_base}, api_script_key: ${api_script_key}, api_script_suffix: ${api_script_suffix}`);
 if ((! api_url_base) || (! api_script_key) || (! api_script_suffix)) {
     // 旧TweetDeck(Cookieのtweetdeck_version=legacy)だと存在しない
     window.tweet_api = Object.assign(tweet_api, {
@@ -115,17 +199,18 @@ if ((! api_url_base) || (! api_script_key) || (! api_script_suffix)) {
 
 const
     api_script = `${api_url_base}api.${api_script_key}${api_script_suffix}`;
-console.debug(`api_script: ${api_script}`);
+log_debug(`api_script: ${api_script}`);
 
 let
     api_js_text;
 try {
     api_js_text = await fetch_text(api_script, {
-        //mode: 'cors',
+        mode: 'cors',
+        credentials : 'include',
     });
 }
 catch (error) {
-    console.error(error);
+    log_error(error);
     window.tweet_api = Object.assign(tweet_api, {
         register_error: `fetch(${api_script}) error`,
     });
@@ -184,7 +269,7 @@ const
                 default_query_params,
                 parameters?.query_params ?? {}
             )).toString();
-        return await fetch(`${api_endpoint}?${query_params_string}`, {
+        return await fetch_json(`${api_endpoint}?${query_params_string}`, {
             headers : {
                 'Content-Type' : 'application/json',
                 'Authorization' : `Bearer ${auth_bearer}`,
@@ -193,11 +278,13 @@ const
                 'X-Twitter-Auth-Type' : 'OAuth2Session',
                 'X-Twitter-Client-Language' : `${client_language}`,
                 //'X-Client-Transaction-Id' : '@@@', // @@@ X-Client-Transaction-Id (94文字?)の求め方が不明
-            }
+            },
+            mode: 'cors',
+            credentials : 'include',
         });
     };
 
-console.debug('operationName_map:', operationName_map);
+log_debug('operationName_map:', operationName_map);
 
 window.tweet_api = Object.assign(tweet_api, {
     call_graphql_api,

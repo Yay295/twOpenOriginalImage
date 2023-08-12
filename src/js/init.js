@@ -39,6 +39,7 @@ if ( chrome.runtime.lastError ) {
     log_info( '* chrome.runtime.lastError.message:', chrome.runtime.lastError.message );
 }
 
+
 var current_url = location.href;
 
 function get_bool( value ) {
@@ -82,12 +83,15 @@ const
     wait_background_ready = (() => {
         // [メモ] backgroundの処理を(async() => {…})(); に変更(2023/08/07)
         // →受信準備ができていない場合にエラーになるため、準備できるまで待つ
+        const
+            wait_msec = 10;
         let
             is_ready = false;
         
         return async () => {
             /*
-            //[TODO] 最初だけのチェックだとなぜかその後のsendMessage()でもエラーが発生する場合があるので常にチェック
+            //[TODO] 最初だけのチェックだとなぜかその後のsendMessage()でもエラーが発生する場合がある模様
+            //→暫定的に、常にチェック
             //if (is_ready) {
             //    return;
             //}
@@ -99,18 +103,20 @@ const
                             type : 'HEALTH_CHECK_REQUEST',
                         });
                     if (response?.is_ready) {
-                        console.debug('background is ready');
+                        log_debug('background is ready', response);
                         is_ready = true;
                         break;
                     }
                 }
                 catch (error) {
-                    console.warn('sendMessage() error', error);
+                    log_warn('sendMessage() error', error);
                 }
-                await async_wait(10);
+                log_debug(`background is not ready => retry after ${wait_msec} msec`);
+                await async_wait(wait_msec);
             }
         };
     })();
+
 
 async function send_content_scripts_info() {
     // content_scripts の情報を渡す
@@ -347,35 +353,34 @@ var extension_functions = ( () => {
                 }
                 
                 const
-                    operationName = 'TweetDetail',
-                    result = await window.tweet_api.call_graphql_api( {
-                        operationName : `${operationName}`,
-                        query_params : {
-                            variables : JSON.stringify( {
-                                'focalTweetId' : `${tweet_id}`,
-                                'with_rux_injections' : false,
-                                'includePromotedContent' : true,
-                                'withCommunity' : true,
-                                'withQuickPromoteEligibilityTweetFields' : true,
-                                'withBirdwatchNotes' : true,
-                                'withVoice' : true,
-                                'withV2Timeline' : true,
-                            } ),
-                        }
-                    } ).then( ( response ) => response.json() ).then( ( response_object ) => ( {
-                        response_object : response_object,
-                    } ) ).catch( ( error ) => ( {
-                        error : error,
-                    } ) );
+                    operationName = 'TweetDetail';
                 
-                if ( result.error ) {
-                    log_error( 'tweet_api.call_graphql_api() error:', result.error );
+                try {
+                    const
+                        response_object = await window.tweet_api.call_graphql_api( {
+                            operationName : `${operationName}`,
+                            query_params : {
+                                variables : JSON.stringify( {
+                                    'focalTweetId' : `${tweet_id}`,
+                                    'with_rux_injections' : false,
+                                    'includePromotedContent' : true,
+                                    'withCommunity' : true,
+                                    'withQuickPromoteEligibilityTweetFields' : true,
+                                    'withBirdwatchNotes' : true,
+                                    'withVoice' : true,
+                                    'withV2Timeline' : true,
+                                } ),
+                            }
+                        } );
+                    analyze_graphql_api_result( operationName, response_object );
+                    const
+                        tweet_info = get_tweet_info( tweet_id );
+                    return tweet_info;
+                }
+                catch ( error ) {
+                    log_error( 'tweet_api.call_graphql_api() error:', error );
                     return null;
                 }
-                
-                analyze_graphql_api_result( operationName, result.response_object );
-                
-                return get_tweet_info( tweet_id );
             },
 
             append_tweet_info = ( tweet_result ) => {
@@ -393,15 +398,37 @@ var extension_functions = ( () => {
                     tweet_id = tweet_result_legacy?.id_str,
                     retweet_id = ( retweed_result ) ? tweet_result?.legacy?.id_str : null,
                     quoted_tweet_id = quoted_result?.legacy?.id_str ?? null,
-                    media_list = tweet_result_legacy?.extended_entities?.media ?? [],
+                    url_info_list = tweet_result_legacy?.entities?.urls ?? [],
+                    media_list = tweet_result_legacy?.extended_entities?.media ?? tweet_result_legacy?.entities?.media ?? [],
+                    full_text = ( ( full_text ) => {
+                        full_text = url_info_list.reduce( ( full_text, url_info ) => {
+                            try {
+                                return full_text.replaceAll( url_info.url, url_info.expanded_url );
+                            }
+                            catch ( error ) {
+                                return full_text;
+                            }
+                        }, full_text ?? '' );
+                        full_text = media_list.reduce( ( full_text, media_info ) => {
+                            try {
+                                return full_text.replaceAll( media_info.url, media_info.expanded_url );
+                            }
+                            catch ( error ) {
+                                return full_text;
+                            }
+                        }, full_text );
+                        return full_text;
+                    } )( tweet_result?.note_tweet?.note_tweet_results?.result?.text ?? tweet_result_legacy?.full_text ),
                     tweet_info = {
+                        tweet_id,
                         user : {
                             id : tweet_result_legacy?.user_id_str,
                             screen_name : user_result_legacy?.screen_name,
                             name : user_result_legacy?.name,
                         },
-                        full_text : tweet_result?.note_tweet?.note_tweet_results?.result?.text ?? tweet_result_legacy?.full_text,
+                        full_text : full_text,
                         created_at : tweet_result_legacy?.created_at,
+                        url_info_list,
                         media_list,
                         retweet_id,
                         quoted_tweet_id,

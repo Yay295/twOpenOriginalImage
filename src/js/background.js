@@ -40,6 +40,18 @@ const
         console.log.apply( console, arg_list.concat( [ ... arguments ] ) );
     }, // end of log_debug()
     
+    log_info = function () {
+        const
+            arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+        console.info.apply( console, arg_list.concat( [ ... arguments ] ) );
+    }, // end of log_info()
+    
+    log_warn = function () {
+        const
+            arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+        console.warn.apply( console, arg_list.concat( [ ... arguments ] ) );
+    }, // end of log_warn()
+    
     log_error = function () {
         const
             arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
@@ -857,28 +869,60 @@ const
             }
             case 'FETCH_TEXT_REQUEST' : {
                 log_debug( 'FETCH_TEXT_REQUEST', message );
-                fetch( message.url, message.options )
-                .then( response => {
-                    if ( ! response.ok ) {
+                ( async () => {
+                    try {
+                        const
+                            fetch_response = await fetch( message.url, message.options );
+                        if ( ! fetch_response.ok ) {
+                            sendResponse( {
+                                error : `${fetch_response.status} ${fetch_response.statusText}`,
+                            } );
+                            return;
+                        }
+                        const
+                            text = await fetch_response.text();
+                        log_debug( 'FETCH_TEXT_REQUEST => text', text );
                         sendResponse( {
-                            error : `${response.status} ${response.statusText}`,
+                            //fetch_response, // TODO: Firefoxでこれを含めると、content_script側で「Error: Could not establish connection. Receiving end does not exist.」となってしまう
+                            text,
                         } );
-                        return;
                     }
-                    return response.text();
-                } )
-                .then( ( text ) => {
-                    log_debug( 'FETCH_TEXT_REQUEST => text', text );
-                    sendResponse( {
-                        text : text,
-                    } );
-                } )
-                .catch( ( error ) => {
-                    log_error( 'FETCH_TEXT_REQUEST => error', error );
-                    sendResponse( {
-                        error : error,
-                    } );
-                } );
+                    catch ( error ) {
+                        log_error( 'FETCH_TEXT_REQUEST => error', error );
+                        sendResponse( {
+                            error,
+                        } );
+                    }
+                } )();
+                return true;
+            }
+            case 'FETCH_JSON_REQUEST' : {
+                log_debug( 'FETCH_JSON_REQUEST', message );
+                ( async () => {
+                    try {
+                        const
+                            fetch_response = await fetch( message.url, message.options );
+                        if ( ! fetch_response.ok ) {
+                            sendResponse( {
+                                error : `${fetch_response.status} ${fetch_response.statusText}`,
+                            } );
+                            return;
+                        }
+                        const
+                            response_object = await fetch_response.json();
+                        log_debug( 'FETCH_JSON_REQUEST => response_object', response_object );
+                        sendResponse( {
+                            //fetch_response, // TODO: Firefoxでこれを含めると、content_script側で「Error: Could not establish connection. Receiving end does not exist.」となってしまう
+                            response_object,
+                        } );
+                    }
+                    catch ( error ) {
+                        log_error( 'FETCH_JSON_REQUEST => error', error );
+                        sendResponse( {
+                            error,
+                        } );
+                    }
+                } )();
                 return true;
             }
             case 'HEALTH_CHECK_REQUEST' : {
@@ -900,6 +944,7 @@ const
                 break;
             }
         }
+        return false;
     }, // end of on_message()
     
     on_click = ( info, tab ) => {

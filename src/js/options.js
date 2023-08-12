@@ -43,6 +43,18 @@ const
                 console.log.apply( console, arg_list.concat( [ ... arguments ] ) );
             }, // end of log_debug()
             
+            log_info : function () {
+                const
+                    arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+                console.info.apply( console, arg_list.concat( [ ... arguments ] ) );
+            }, // end of log_info()
+            
+            log_warn : function () {
+                const
+                    arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];
+                console.warn.apply( console, arg_list.concat( [ ... arguments ] ) );
+            }, // end of log_warn()
+            
             log_error : function () {
                 const
                     arg_list = [ '[' + SCRIPT_NAME + ']', '(' + ( new Date().toISOString() ) + ')' ];

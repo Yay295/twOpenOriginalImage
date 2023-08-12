@@ -2,7 +2,7 @@
     "manifest_version" : 2,
     "name" : "__MSG_ext_title__",
     "short_name" : "__MSG_ext_short_name__",
-    "version" : "0.1.13.0",
+    "version" : "0.1.14.0",
     "description" : "__MSG_ext_description__",
     "author" : "furyu",
     "default_locale" : "en",
@@ -26,7 +26,7 @@
             "all_frames" : true
         }
     ],
-    "permissions" : [ "contextMenus", "downloads", "storage", "*://pbs.twimg.com/media/*" ],
+    "permissions" : [ "contextMenus", "downloads", "storage", "*://*.twimg.com/*", "*://*.twitter.com/*" ],
     "background"  : {
         "scripts" : [ "js/background.js" ],
         "persistent" : false

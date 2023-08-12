@@ -3,7 +3,7 @@
 
 const
     version = "0.1.0",
-    DEBUG = true;
+    DEBUG = false;
 
 if (window?.xhr_monitor?.version !== undefined) {
     return;
