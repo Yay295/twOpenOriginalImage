@@ -1454,11 +1454,21 @@ function download_zip( tweet_info_json ) {
                 callback( result, false );
             }
             else {
-                const
-                    error_message = 'download_zip() extension_functions.async_get_tweet_info() failure';
-                callback( {
-                    error_message,
-                }, true );
+                /*
+                //const
+                //    error_message = 'download_zip() extension_functions.async_get_tweet_info() failure';
+                //callback( {
+                //    error_message,
+                //}, true );
+                */
+                fetch_status( tweet_id )
+                .then( result => {
+                    callback( result, false );
+                } )
+                .catch( error => {
+                    log_error( 'download_zip() fetch_status() error:', error );
+                    callback( error, true );
+                } );
             }
         } )();
     }
