@@ -4,7 +4,7 @@
 // @namespace       http://furyu.hatenablog.com/
 // @author          furyu
 // @license         MIT
-// @version         0.1.14
+// @version         0.1.15
 // @include         http://twitter.com/*
 // @include         https://twitter.com/*
 // @include         https://mobile.twitter.com/*
@@ -1061,7 +1061,7 @@ const
                             }
                         }
                         catch (error) {
-                            log_warn('sendMessage() error', error);
+                            log_info('sendMessage() error', error);
                         }
                         log_debug(`background is not ready => retry after ${wait_msec} msec`);
                         await async_wait(wait_msec);
@@ -4168,6 +4168,14 @@ function initialize( user_options ) {
                         if ( is_react_page() ) {
                             tweet_link = get_tweet_link_on_react_twitter( tweet );
                             tweet_url = tweet_link && tweet_link.href;
+                            if ( ! tweet_url ) {
+                                try {
+                                    tweet_url = tweet.querySelector( 'a[role="link"][href$="/photo/1"]' ).href.replace( /\/photo\/1$/, '' );
+                                }
+                                catch ( error ) {
+                                    log_error( 'cannot find tweet_url in tweet element', tweet );
+                                }
+                            }
                             //tweet_text = tweet.querySelector( 'div[lang][dir="auto"] > span' );
                             tweet_text = tweet.querySelector( 'div[lang][dir="auto"]' );
                             if ( ! tweet_text ) {
@@ -4436,6 +4444,9 @@ function initialize( user_options ) {
                
             tweet_list = to_array( node.querySelectorAll( article_selector ) ).filter( ( article ) => {
                 if ( ( ( article.getAttribute( 'data-testid' ) == 'tweet' ) || article.querySelector( 'div[data-testid="tweet"]' ) ) && article.querySelector( 'div[aria-label] > img' ) ) {
+                    if ( ! article.querySelector( 'a[role="link"][href$="/photo/1"]' ) ) {
+                        return false;
+                    }
                     return ( !! add_open_button( article ) );
                 }
                 return false;

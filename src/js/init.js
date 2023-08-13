@@ -109,7 +109,7 @@ const
                     }
                 }
                 catch (error) {
-                    log_warn('sendMessage() error', error);
+                    log_info('sendMessage() error', error);
                 }
                 log_debug(`background is not ready => retry after ${wait_msec} msec`);
                 await async_wait(wait_msec);

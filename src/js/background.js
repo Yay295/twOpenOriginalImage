@@ -571,7 +571,8 @@ const
                 return await chrome.contextMenus.update( menu_id, update_properties );
             },
             remove_context_menu = async ( menu_id ) => {
-                return await chrome.contextMenus.remove( menu_id );
+                //return await chrome.contextMenus.remove( menu_id ); // [TODO] ←こちらだと「Unchecked runtime.lastError: Cannot find menu item with id download_image」が出てしまう（コンテキスト「不明」・スタック トレース「:0（無名関数）」・表示する通知はありません。続行してください。）、try {} catch () {} で囲ってもダメ
+                return await chrome.contextMenus.removeAll();
             };
             
         return async ( eventname, force_init_flag = false ) => {
@@ -594,18 +595,27 @@ const
                 // ・tabs.create() で新たにタブを開いた場合も、background から開いたときは上記の不具合が継承される模様
                 
                 log_error( '*** background download is not supported on old MS-Edge ***' );
-                await remove_context_menu( DOWNLOAD_MENU_ID );
+                try {
+                    await remove_context_menu( DOWNLOAD_MENU_ID );
+                }
+                catch ( error ) {
+                }
                 return;
             }
             
             await update_context_menu_flags();
+            
             if ( force_init_flag ) {
                 CONTEXT_MENU_INITIALIZED = false; await set_value( 'CONTEXT_MENU_INITIALIZED', CONTEXT_MENU_INITIALIZED );
             }
             
             if ( ! CONTEXT_MENU_IS_VISIBLE ) {
                 if ( CONTEXT_MENU_INITIALIZED ) {
-                    await remove_context_menu( DOWNLOAD_MENU_ID );
+                    try {
+                        await remove_context_menu( DOWNLOAD_MENU_ID );
+                    }
+                    catch ( error ) {
+                    }
                     CONTEXT_MENU_INITIALIZED = false; await set_value( 'CONTEXT_MENU_INITIALIZED', CONTEXT_MENU_INITIALIZED );
                 }
                 log_debug( '*** initialize(): remove context menu' );
@@ -649,18 +659,26 @@ const
             //}
             */
             
-            await remove_context_menu( DOWNLOAD_MENU_ID );
-            log_debug( '*** removed existing context menu ***' );
+            try {
+                await remove_context_menu( DOWNLOAD_MENU_ID );
+                log_debug( '*** removed existing context menu ***' );
+            }
+            catch ( error ) {
+            }
             
-            await create_context_menu( {
-                type : 'normal'
-            ,   id : DOWNLOAD_MENU_ID
-            ,   title : title
-            ,   contexts : [ 'image' ]
-            ,   targetUrlPatterns : [ '*://pbs.twimg.com/media/*' ]
-            } );
-            log_debug( '*** created context menu ***' );
-            
+            try {
+                await create_context_menu( {
+                    type : 'normal'
+                ,   id : DOWNLOAD_MENU_ID
+                ,   title : title
+                ,   contexts : [ 'image' ]
+                ,   targetUrlPatterns : [ '*://pbs.twimg.com/media/*' ]
+                } );
+                log_debug( '*** created context menu ***' );
+            }
+            catch ( error ) {
+                log_error( 'error in create_context_menu()', error );
+            }
             CONTEXT_MENU_INITIALIZED = true; await set_value( 'CONTEXT_MENU_INITIALIZED', CONTEXT_MENU_INITIALIZED );
             log_debug( '*** initialize(): completed' );
         }
