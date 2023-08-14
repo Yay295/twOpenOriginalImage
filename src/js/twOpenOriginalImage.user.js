@@ -4,7 +4,7 @@
 // @namespace       http://furyu.hatenablog.com/
 // @author          furyu
 // @license         MIT
-// @version         0.1.15
+// @version         0.1.16
 // @include         http://twitter.com/*
 // @include         https://twitter.com/*
 // @include         https://mobile.twitter.com/*
@@ -227,8 +227,11 @@ var DEBUG = false,
         </svg>
     `;
 
-const // 参照: [Firefox のアドオン(content_scripts)でXMLHttpRequestやfetchを使う場合の注意 - 風柳メモ](https://memo.furyutei.com/entry/20180718/1531914142)
-    fetch = (typeof content != 'undefined' && typeof content.fetch == 'function') ? content.fetch  : window.fetch;
+/*
+//const // 参照: [Firefox のアドオン(content_scripts)でXMLHttpRequestやfetchを使う場合の注意 - 風柳メモ](https://memo.furyutei.com/entry/20180718/1531914142)
+//    fetch = (typeof content != 'undefined' && typeof content.fetch == 'function') ? content.fetch  : window.fetch;
+//[覚書] Firefox上のTweetDeck(legacy)ではcontent.fetch()を使うとCSP("connect-src")絡みで画像のダウンロードができなくなってしまう模様(Uncaught (in promise) TypeError: NetworkError when attempting to fetch resource.)(2023/08/14)
+*/
 
 switch ( LANGUAGE ) {
     case 'ja' :
@@ -4478,6 +4481,7 @@ function initialize( user_options ) {
             } );
         }
         
+        log_debug(`tweet_list.length=${tweet_list.length}`);
         if ( tweet_list.length <= 0 ) {
             return false;
         }
